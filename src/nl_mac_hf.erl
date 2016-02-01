@@ -48,7 +48,7 @@
 %% Extract functions
 -export([extract_payload_mac_flag/1, extract_payload_nl_flag/1, create_ack/1, extract_ack/2]).
 %% Extract/create header functions
--export([extract_neighbours_path/2]).
+-export([extract_neighbours_path/2, extract_path_data/2]).
 %% Send NL functions
 -export([send_nl_command/4, send_ack/3, send_path/2, send_helpers/4, send_cts/6, send_mac/4, fill_msg/2]).
 %% Parse NL functions
@@ -393,7 +393,11 @@ extract_path_data(SM, Payl) ->
   [Path, Rest] = bin_addrs_to_list(PTail, BLenPath),
   path_data = ?NUM2TYPEMSG(BType),
   true = BLenPath > 0,
-  ?TRACE(?ID, "extract path data BType ~p BLenPath ~p~n", [BType, BLenPath]),
+  if(SM =/= nothing) ->
+    ?TRACE(?ID, "extract path data BType ~p BLenPath ~p~n", [BType, BLenPath]);
+  true ->
+    nothing
+  end,
   if Data_bin =:= false ->
     Add = bit_size(Rest) rem 8,
     <<_:Add, Data/binary>> = Rest,
@@ -1058,8 +1062,9 @@ init_dets(SM) ->
     [{NL_protocol, PkgID}] ->
       dets:insert(Ref, {NL_protocol, PkgID + 1}),
       insertETS(SM, packet_id, PkgID + 1);
-    _ -> dets:insert(Ref, {NL_protocol, 0}),
-         insertETS(SM, packet_id, 0)
+    _ ->
+      dets:insert(Ref, {NL_protocol, 0}),
+      insertETS(SM, packet_id, 0)
   end,
   B1 = dets:lookup(Ref, NL_protocol),
   ?INFO(?ID, "Init dets LA ~p ~p~n", [LA, B1]),
