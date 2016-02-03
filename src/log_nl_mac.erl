@@ -11,36 +11,36 @@
 
 start_parse(NLProtocol, LogDir) ->
   EtsName = list_to_atom(atom_to_list(results_) ++ atom_to_list(NLProtocol)),
-  ets:new(EtsName, [set, named_table]),
-  start_parse(EtsName, NLProtocol, LogDir, ?NODES),
-  analyse(EtsName).
+  EtsTable = ets:new(EtsName, [set, named_table]),
+  start_parse(EtsTable, NLProtocol, LogDir, ?NODES),
+  analyse(EtsTable).
 
 start_parse(_, _, _, []) -> [];
-start_parse(EtsName, NLProtocol, Dir, [HNode | TNodes]) ->
+start_parse(EtsTable, NLProtocol, Dir, [HNode | TNodes]) ->
   LogDir = Dir ++ "/log" ++ integer_to_list(HNode),
   {ok, _} = fsm_rb:start([{report_dir, LogDir}]),
-  parse_send(HNode, EtsName, NLProtocol, LogDir),
+  parse_send(HNode, EtsTable, NLProtocol, LogDir),
   fsm_rb:stop(),
-  start_parse(EtsName, NLProtocol, Dir, TNodes).
+  start_parse(EtsTable, NLProtocol, Dir, TNodes).
 
-parse_send(HNode, EtsName, NL_Protocol, LogDir) ->
+parse_send(HNode, EtsTable, NL_Protocol, LogDir) ->
   file:delete(LogDir ++ "/parse_send.log"),
   ok = fsm_rb:start_log(LogDir ++ "/parse_send.log"),
   fsm_rb:grep("MAC_AT_SEND"),
-  readlines(HNode, EtsName, NL_Protocol, send, LogDir ++ "/parse_send.log"),
+  readlines(HNode, EtsTable, NL_Protocol, send, LogDir ++ "/parse_send.log"),
 
   file:delete(LogDir ++ "/parse_recv.log"),
   ok = fsm_rb:start_log(LogDir ++ "/parse_recv.log"),
   fsm_rb:grep("MAC_AT_RECV"),
-  readlines(HNode, EtsName, NL_Protocol, recv, LogDir ++ "/parse_recv.log").
+  readlines(HNode, EtsTable, NL_Protocol, recv, LogDir ++ "/parse_recv.log").
 
-readlines(HNode, EtsName, NL_Protocol, Action, FileName) ->
+readlines(HNode, EtsTable, NL_Protocol, Action, FileName) ->
   {ok, Device} = file:open(FileName, [read]),
-  try get_all_lines(HNode, EtsName, NL_Protocol, Action, Device, "")
+  try get_all_lines(HNode, EtsTable, NL_Protocol, Action, Device, "")
     after file:close(Device)
   end.
 
-get_all_lines(HNode, EtsName, NL_Protocol, Action, Device, OLine) ->
+get_all_lines(HNode, EtsTable, NL_Protocol, Action, Device, OLine) ->
   case io:get_line(Device, "") of
     eof  -> [];
     Line ->
@@ -55,10 +55,10 @@ get_all_lines(HNode, EtsName, NL_Protocol, Action, Device, OLine) ->
           Time = get_time(OLine),
           RTuple = get_tuple(Action, OLine),
           Payl = get_payl(OLine),
-          extract_payl(HNode, EtsName, Action, RTuple, NL_Protocol, Time, Payl),
-          get_all_lines(HNode, EtsName, NL_Protocol, Action, Device, Line);
+          extract_payl(HNode, EtsTable, Action, RTuple, NL_Protocol, Time, Payl),
+          get_all_lines(HNode, EtsTable, NL_Protocol, Action, Device, Line);
         nomatch ->
-          get_all_lines(HNode, EtsName, NL_Protocol, Action, Device, OLine ++ Line)
+          get_all_lines(HNode, EtsTable, NL_Protocol, Action, Device, OLine ++ Line)
       end
   end.
 
@@ -102,7 +102,7 @@ get_payl(Line) ->
 
 extract_payl(_, _, _, _, _, _, nothing) ->
   [];
-extract_payl(_HNode, _EtsName, send, _STuple, icrpr, Time, Payl) ->
+extract_payl(_HNode, _EtsTable, send, _STuple, icrpr, Time, Payl) ->
   [Flag, PkgID, Dst, Src, Data] = nl_mac_hf:extract_payload_nl_flag(Payl),
   case nl_mac_hf:num2flag(Flag, nl) of
     data ->
@@ -113,7 +113,7 @@ extract_payl(_HNode, _EtsName, send, _STuple, icrpr, Time, Payl) ->
     dst_reached ->
       nothing
   end;
-extract_payl(_HNode,_EtsName, recv, RTuple, icrpr, Time, Payl) ->
+extract_payl(_HNode,_EtsTable, recv, RTuple, icrpr, Time, Payl) ->
   if RTuple == nothing;
      Payl == <<>> ->
     nothing;
@@ -130,15 +130,15 @@ extract_payl(_HNode,_EtsName, recv, RTuple, icrpr, Time, Payl) ->
         nothing
     end
   end;
-extract_payl(_HNode,_EtsName, send, _STuple, sncfloodr, Time, Payl) ->
+extract_payl(HNode, EtsTable, send, _STuple, sncfloodr, Time, Payl) ->
   [Flag, PkgID, Dst, Src, Data] = nl_mac_hf:extract_payload_nl_flag(Payl),
   case nl_mac_hf:num2flag(Flag, nl) of
     data ->
-      io:format("SEND ~p ~p ~p ~p ~p ~n", [Time, PkgID, Dst, Src, Data]);
+      add_data(EtsTable, {PkgID, Data, Src, Dst}, {send, HNode, Time});
     dst_reached ->
       nothing
   end;
-extract_payl(_HNode,_EtsName, recv, RTuple, sncfloodr, Time, Payl) ->
+extract_payl(HNode, EtsTable, recv, RTuple, sncfloodr, Time, Payl) ->
   if RTuple == nothing;
      Payl == <<>> ->
     nothing;
@@ -147,13 +147,73 @@ extract_payl(_HNode,_EtsName, recv, RTuple, sncfloodr, Time, Payl) ->
     [Flag, PkgID, Dst, Src, Data] = nl_mac_hf:extract_payload_nl_flag(Payl),
     case nl_mac_hf:num2flag(Flag, nl) of
       data ->
-        io:format("RECV ~p ~p ~p ~p ~p ~p ~p ~p ~p ~n", [Time, RSrc, RDst, Rssi, Integrity, PkgID, Dst, Src, Data]);
+        add_data(EtsTable, {PkgID, Data, Src, Dst}, {recv, HNode, Time, RSrc, RDst, Rssi, Integrity});
       ack ->
         nothing;
       dst_reached ->
         nothing
     end
   end.
+
+% IdTuple = {PkgID, Data, Src, Dst}
+% {send, RSrc, TimeSend}
+% {recv, HNode, TimeRecv, RSrc, RDst, Rssi, Integrity}
+add_data(EtsTable, IdTuple, VTuple) ->
+  LookEts = ets:lookup(EtsTable, IdTuple),
+
+  case LookEts of
+    [{IdTuple, {{nodes_sent, Ns},
+              {nodes_recv, Nr},
+              {time_sent, Ts},
+              {time_recv, Tr},
+              {params, P}}}] ->
+      add_exist_data(EtsTable, IdTuple, VTuple, {Ns, Nr, Ts, Tr, P});
+    _ ->
+      add_new_data(EtsTable, IdTuple, VTuple)
+  end.
+
+add_new_data(EtsTable, IdTuple, VTuple) ->
+  case VTuple of
+    {send, Src, TimeSend} ->
+      ets:insert(EtsTable, {IdTuple, {{nodes_sent, [Src]},
+                                      {nodes_recv, []},
+                                      {time_sent, [{Src, TimeSend}]},
+                                      {time_recv, []},
+                                      {params, []}}});
+
+    {recv, Src, TimeRecv, RSrc, _RDst, Rssi, Integrity} ->
+      ets:insert(EtsTable, {IdTuple, {{nodes_sent, [RSrc]},
+                                      {nodes_recv, [Src]},
+                                      {time_sent, []},
+                                      {time_recv, [{Src, RSrc, TimeRecv}]},
+                                      {params, [{Src, RSrc, Rssi, Integrity}]}}})
+  end.
+
+add_exist_data(EtsTable, IdTuple, VTuple, {Ns, Nr, Ts, Tr, P}) ->
+  case VTuple of
+    {send, Src, TimeSend} ->
+      NewNs = add_to_list(Ns, Src),
+      NewTs = add_to_list(Ts, {Src, TimeSend}),
+      ets:insert(EtsTable, {IdTuple, {{nodes_sent, NewNs},
+                                      {nodes_recv, Nr},
+                                      {time_sent, NewTs},
+                                      {time_recv, Tr},
+                                      {params, P}}});
+
+    {recv, Src, TimeRecv, RSrc, _RDst, Rssi, Integrity} ->
+      NewNs = add_to_list(Ns, RSrc),
+      NewNr = add_to_list(Nr, Src),
+      NewTr = add_to_list(Tr, {Src, RSrc, TimeRecv}),
+      NewP = add_to_list(P, {Src, RSrc, Rssi, Integrity}),
+      ets:insert(EtsTable, {IdTuple, {{nodes_sent, NewNs},
+                                      {nodes_recv, NewNr},
+                                      {time_sent, Ts},
+                                      {time_recv, NewTr},
+                                      {params, NewP}}})
+  end.
+
+add_to_list(List, Val) ->
+  nl_mac_hf:check_dubl_in_path(List, Val).
 
 bin_to_num(Bin) ->
   N = binary_to_list(Bin),
@@ -162,9 +222,10 @@ bin_to_num(Bin) ->
     {F, _Rest} -> F
   end.
 
-
-analyse(EtsName) ->
-  io:format("!!!!!!!!!!!!!!!!!!!!! ANALYZE ~p~n", [EtsName]).
+analyse(EtsTable) ->
+  io:format("!!!!!!!!!!!!!!!!!!!!! ANALYZE ~p~n", [EtsTable]),
+  T = ets:match(EtsTable, '$1'),
+  io:format(" ~p~n", [T]).
 
 %log_nl_mac:start_parse(icrpr, "/home/nikolya/work/experiments/prepare_sahalinsk/sea_tests/evins_nl_mac_27.01.2016/test_alh_icrpr").
 %log_nl_mac:start_parse(sncfloodr, "/home/nikolya/work/experiments/prepare_sahalinsk/sea_tests/evins_nl_mac_27.01.2016/test_alh_sncfloodr").
