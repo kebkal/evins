@@ -443,17 +443,21 @@ create_ack(CountHops) ->
   BCountHops = <<CountHops:CBitsLenPath>>,
   Data_bin = is_binary(BCountHops) =:= false or ( (bit_size(BCountHops) rem 8) =/= 0),
   if Data_bin =:= false ->
-     Add = 8 - bit_size(BCountHops) rem 8,
-     <<BCountHops/bitstring, 0:Add>>;
-   true ->
-     BCountHops
-   end.
+    Add = 8 - bit_size(BCountHops) rem 8,
+    <<BCountHops/bitstring, 0:Add>>;
+  true ->
+    BCountHops
+  end.
 
 extract_ack(SM, Payl) ->
-   CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
-   <<CountHops:CBitsLenPath, _Rest/bitstring>> = Payl,
-   ?TRACE(?ID, "extract_ack CountHops ~p ~n", [CountHops]),
-   CountHops.
+  CBitsLenPath = count_flag_bits(?BITS_LEN_PATH),
+  <<CountHops:CBitsLenPath, _Rest/bitstring>> = Payl,
+  if(SM =/= nothing) ->
+    ?TRACE(?ID, "extract_ack CountHops ~p ~n", [CountHops]);
+  true ->
+    nothing
+  end,
+  CountHops.
 
 %%--------------- neighbours -------------------
 %   3b        6b                LenNeighbours * 6b    REST till / 8
