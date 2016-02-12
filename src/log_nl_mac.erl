@@ -13,7 +13,7 @@ start_parse(MACProtocol, NLProtocol, LogDir) ->
   EtsName = list_to_atom(atom_to_list(results_) ++ atom_to_list(NLProtocol)),
   EtsTable = ets:new(EtsName, [set, named_table]),
   start_parse(EtsTable, MACProtocol, NLProtocol, LogDir, ?NODES),
-  analyse(EtsTable).
+  analyse(EtsTable, NLProtocol).
 
 start_parse(_, _, _, _, []) -> [];
 start_parse(EtsTable, MACProtocol, NLProtocol, Dir, [HNode | TNodes]) ->
@@ -381,9 +381,195 @@ add_ack_to_data({{PkgID, ack, Src, Dst}, StatAck}, List_all_data) ->
     end
   , [], List_all_data).
 
-  analyse(EtsTable) ->
-  Res = cat_data_ack(EtsTable),
-  io:format(" ~p~n", [Res]).
+
+sync_time(Table, NLProtocol, EtsTable) ->
+  sync_time(Table, [], NLProtocol, EtsTable).
+
+sync_time([], SyncTable, _, _) ->
+  SyncTable;
+sync_time([Pkg | T], SyncTable, NLProtocol, EtsTable) ->
+  SyncPkg = sync_pkg(Pkg, NLProtocol, EtsTable),
+  sync_time(T, [SyncPkg | SyncTable], NLProtocol, EtsTable).
+
+sync_pkg(Pkg, NLProtocol, EtsTable) ->
+  case NLProtocol of
+    icrpr ->
+      [{ IdTuple, {RelayTuple, AckTuple}}] = Pkg,
+      {_PkgId, _Data, Src, _Dst} = IdTuple,
+
+      {{nodes_sent, NS},
+      {nodes_recv, NR},
+      {time_sent, LNSent},
+      {time_recv, LNRecv},
+      {params, Params},
+      {paths_sent, SPath},
+      {paths_recv, RPath}} = RelayTuple,
+
+      {ack, {
+      {send_ack, _SendAck},
+      {recv_ack, _RecvAck}}} = AckTuple,
+
+      ets:insert(EtsTable, {sync_neighbours, [Src]}),
+      [NewLNSent, NewLNRecv] = start_sync_neighbour([Src], LNSent, LNRecv, EtsTable),
+
+      SyncRelayTuple = {{nodes_sent, NS},
+      {nodes_recv, NR},
+      {time_sent, NewLNSent},
+      {time_recv, NewLNRecv},
+      {params, Params},
+      {paths_sent, SPath},
+      {paths_recv, RPath}},
+
+      %TODO SYnc Ack tuple
+      [{ IdTuple, {SyncRelayTuple, AckTuple}}];
+    _ when NLProtocol =:= sncfloodrack;
+           NLProtocol =:= dpffloodrack ->
+           nothing;
+    _ ->
+      {IdTuple, RelayTuple} = Pkg,
+      {_PkgId, _Data, Src, _Dst} = IdTuple,
+
+      {{nodes_sent, NS},
+      {nodes_recv, NR},
+      {time_sent, LNSent},
+      {time_recv, LNRecv},
+      {params, Params}} = RelayTuple,
+
+      ets:insert(EtsTable, {sync_neighbours, [Src]}),
+      [NewLNSent, NewLNRecv] = start_sync_neighbour([Src], LNSent, LNRecv, EtsTable),
+
+      SyncRelayTuple = {{nodes_sent, NS},
+      {nodes_recv, NR},
+      {time_sent, NewLNSent},
+      {time_recv, NewLNRecv},
+      {params, Params}},
+
+      %TODO SYnc Ack tuple
+      { IdTuple, SyncRelayTuple}
+  end.
+
+
+start_sync_neighbour(0, LNSent, LNRecv, _) ->
+  [LNSent, LNRecv];
+start_sync_neighbour(Src, LNSent, LNRecv, EtsTable) ->
+ [NotSyncNeighbours, NewLNSent, NewLNRecv] = sync_neighbour_helper(Src, LNSent, LNRecv, EtsTable, []),
+  case NotSyncNeighbours of
+    [] ->
+      start_sync_neighbour(0, NewLNSent, NewLNRecv, EtsTable);
+    _ ->
+      start_sync_neighbour(NotSyncNeighbours, NewLNSent, NewLNRecv, EtsTable)
+  end.
+
+sync_neighbour_helper([], NewLNSent, NewLNRecv, _, Neighbours) ->
+  CNeighbours = lists:flatten(Neighbours),
+  [CNeighbours, NewLNSent, NewLNRecv];
+sync_neighbour_helper([Src | T], LNSent, LNRecv, EtsTable, Neighbours) ->
+  [{sync_neighbours, Sync_list}] = ets:lookup(EtsTable, sync_neighbours),
+  [SyncNeighbours, NewLNSent, NewLNRecv] = sync_neighbour(Src, LNSent, LNRecv, EtsTable),
+
+  CNeighbours = lists:foldr(fun(X, A) ->
+      case lists:member(X, Sync_list) of
+        true -> A;
+        _ -> [X, A]
+      end
+    end, [], SyncNeighbours),
+
+  case lists:member(Src, Sync_list) of
+    true ->
+      sync_neighbour_helper(T, NewLNSent, NewLNRecv, EtsTable, [CNeighbours | Neighbours]);
+    _ ->
+      Sync_list_new = add_to_list(Sync_list, Src),
+      ets:insert(EtsTable, {sync_neighbours, Sync_list_new}),
+      sync_neighbour_helper(T, NewLNSent, NewLNRecv, EtsTable, [CNeighbours | Neighbours])
+  end.
+
+sync_neighbour(Src, LNSent, LNRecv, EtsTable) ->
+  TimeSent = lists:foldr(fun(X, A) -> case X of {Src, _, _} -> [X | A]; _ -> A end end, [], LNSent),
+  [NeighboursRecv, NotNeighboursRecv] =
+  lists:foldr(
+    fun(X, [A, NA]) ->
+      case X of
+        {_, Src, _} -> [[X | A], NA];
+        _ -> [A, [X | NA]]
+      end
+    end, [[], []], LNRecv),
+
+  % TODO: if more than 1 retry
+  [SyncNeighboursRecv, Neighbours] =
+  case length(TimeSent) of
+    0 -> [[], []];
+    1 ->
+      [{_, _, STimeStamp}] = TimeSent,
+      lists:foldr( fun(X, [A, ADst]) ->
+        {Dst, RDst, RTimeStamp} = X,
+        NewTimeStamp = find_delta_t(Src, STimeStamp, Dst, RTimeStamp, EtsTable),
+        [[{Dst, RDst, NewTimeStamp} | A], [Dst | ADst]]
+      end, [[], []], NeighboursRecv);
+    _ ->
+      {_, _, STimeStamp} = lists:last(TimeSent),
+      lists:foldr( fun(X, [A, ADst]) ->
+        {Dst, RDst, RTimeStamp} = X,
+        NewTimeStamp = find_delta_t(Src, STimeStamp, Dst, RTimeStamp, EtsTable),
+        [[{Dst, RDst, NewTimeStamp} | A], [Dst | ADst]]
+      end, [[], []], NeighboursRecv)
+  end,
+
+  [SyncNeighboursSent, NotNeighboursSend]=
+  lists:foldr(
+    fun(X, [A, SNA]) ->
+      Res =
+      lists:foldr(
+        fun(NSrc, NA) ->
+          case X of
+            {NSrc, Dst, SendTimeStamp} ->
+              NewTimeStamp = find_delta_t(Src, SendTimeStamp, NSrc, EtsTable),
+              [{NSrc, Dst, NewTimeStamp} | NA];
+            _ ->
+            NA
+          end
+        end, [], Neighbours),
+      if Res == [] ->
+        [A, [X |SNA]];
+      true ->
+        [[Res | A], SNA]
+      end
+    end, [[], []], LNSent),
+
+  NewSendList = lists:flatten(lists:merge([SyncNeighboursSent, NotNeighboursSend])),
+  NewRecvList = lists:merge(SyncNeighboursRecv, NotNeighboursRecv),
+
+  [Neighbours, NewSendList, NewRecvList].
+
+find_delta_t(NSrc, STimeStamp, Dst, EtsTable) ->
+  case is_float(STimeStamp) of
+    true ->
+      STimeStamp;
+    _ ->
+      case ets:lookup(EtsTable, {NSrc, Dst}) of
+        [{{NSrc, Dst}, Delta}] ->
+          STimeStamp + Delta;
+        _     ->
+          STimeStamp
+      end
+  end.
+
+find_delta_t(Src, STimeStamp, Dst, RTimeStamp, EtsTable) ->
+  case is_float(RTimeStamp) of
+    true ->
+      RTimeStamp;
+    _ ->
+      Dist = ?DISTANCE({Src, Dst}),
+      TransmissionTime = (Dist / ?SOUND_SPEED)  * 1000000,
+      Delta = STimeStamp - RTimeStamp + TransmissionTime,
+      ets:insert(EtsTable, { {Src, Dst}, Delta}),
+      RTimeStamp + Delta
+  end.
+
+analyse(EtsTable, NLProtocol) ->
+  Table = cat_data_ack(EtsTable),
+  EtsSyncTable = ets:new(sync_links, [set, named_table]),
+  SyncTable = sync_time(Table, NLProtocol, EtsSyncTable),
+  io:format(" ~p~n", [SyncTable]).
 
 
 %log_nl_mac:start_parse(csma_alh, icrpr, "/home/nikolya/work/experiments/prepare_sahalinsk/sea_tests/evins_nl_mac_27.01.2016/test_alh_icrpr").
