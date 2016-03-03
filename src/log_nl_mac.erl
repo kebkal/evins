@@ -778,10 +778,106 @@ find_timestamp_pkgid_helper(Table, PkgId) ->
     end
   end, nothing, Table).
 
+prepare_add_info(Table, NLProtocol) ->
+  NTable =
+  lists:foldr( fun(X, Acc) ->
+    case X of
+      {Id = {_Pkg, Msg, Src, _Dst}, RelayTuple} ->
+        case re:run(Msg, "([^:]*):XXXXXXXXXXXXXXXXXXXXXX", [dotall,{capture, all_but_first, binary}]) of
+          nomatch ->
+            NSent = get_time_sent_interval(NLProtocol, Src, X, send_time),
+            if(NSent =:= 0) ->
+              LMsg = binary_to_list(Msg),
+              LTStapms = lists:last(string:tokens(LMsg, ",")),
+              TStapms = list_to_integer(LTStapms) * 1000000,
+              {{nodes_sent, NS},
+              {nodes_recv, NR},
+              {time_sent, LNSent},
+              {time_recv, LNRecv},
+              {params, Params}} = RelayTuple,
+              NNS = add_to_list(NS, {Src, 255}),
+              NLNSent = add_to_list(LNSent, {Src, 255, TStapms}),
+              NRelayTuple = {{nodes_sent, NNS},
+              {nodes_recv, NR},
+              {time_sent, NLNSent},
+              {time_recv, LNRecv},
+              {params, Params}},
+              [{Id, NRelayTuple} | Acc];
+            true ->
+              [X | Acc]
+            end;
+          {match, _} ->
+            [X | Acc]
+        end;
+      [{Id = {_Pkg, Msg, Src, _Dst}, {RelayTuple, AckTuple}}] when NLProtocol =:= icrpr ->
+        case re:run(Msg, "([^:]*):XXXXXXXXXXXXXXXXXXXXXX", [dotall,{capture, all_but_first, binary}]) of
+          nomatch ->
+            NSent = get_time_sent_interval(NLProtocol, Src, X, send_time),
+            if(NSent =:= 0) ->
+              LMsg = binary_to_list(Msg),
+              LTStapms = lists:last(string:tokens(LMsg, ",")),
+              TStapms = list_to_integer(LTStapms) * 1000000,
+              {{nodes_sent, NS},
+              {nodes_recv, NR},
+              {time_sent, LNSent},
+              {time_recv, LNRecv},
+              {params, Params},
+              {paths_sent, SPath},
+              {paths_recv, RPath}} = RelayTuple,
+              NNS = add_to_list(NS, {Src, 255}),
+              NLNSent = add_to_list(LNSent, {Src, 255, TStapms}),
+              NRelayTuple = {{nodes_sent, NNS},
+              {nodes_recv, NR},
+              {time_sent, NLNSent},
+              {time_recv, LNRecv},
+              {params, Params},
+              {paths_sent, SPath},
+              {paths_recv, RPath}},
+              [ [{Id, {NRelayTuple, AckTuple} }] | Acc];
+            true ->
+              [X | Acc]
+            end;
+        {match, _} ->
+            [X | Acc]
+        end;
+      [{Id = {_Pkg, Msg, Src, _Dst}, {RelayTuple, AckTuple}}] ->
+        case re:run(Msg, "([^:]*):XXXXXXXXXXXXXXXXXXXXXX", [dotall,{capture, all_but_first, binary}]) of
+          nomatch ->
+            NSent = get_time_sent_interval(NLProtocol, Src, X, send_time),
+            if(NSent =:= 0) ->
+              LMsg = binary_to_list(Msg),
+              LTStapms = lists:last(string:tokens(LMsg, ",")),
+              TStapms = list_to_integer(LTStapms) * 1000000,
+              {{nodes_sent, NS},
+              {nodes_recv, NR},
+              {time_sent, LNSent},
+              {time_recv, LNRecv},
+              {params, Params}} = RelayTuple,
+              NNS = add_to_list(NS, {Src, 255}),
+              NLNSent = add_to_list(LNSent, {Src, 255, TStapms}),
+              NRelayTuple = {{nodes_sent, NNS},
+              {nodes_recv, NR},
+              {time_sent, NLNSent},
+              {time_recv, LNRecv},
+              {params, Params}},
+              [ [{Id, {NRelayTuple, AckTuple}}] | Acc];
+            true ->
+              [X | Acc]
+            end;
+        {match, _} ->
+            [X | Acc]
+        end;
+      _ ->
+        Acc
+    end
+  end, [], Table),
+
+  NTable.
+
 analyse(EtsTable, NLProtocol) ->
   Table = cat_data_ack(EtsTable),
-  %EtsSyncTable = ets:new(sync_links, [set, named_table]),
-  %SyncTable = sync_time(Table, NLProtocol, EtsSyncTable),
+  AddTable = prepare_add_info(Table, NLProtocol),
+
   Is = [4, 8, 15],
 
   OIntervals =
@@ -794,13 +890,13 @@ analyse(EtsTable, NLProtocol) ->
     end
   end, [], Is),
 
-  Intervals =
+  TIntervals =
   if(length(OIntervals) < 3) ->
-    PkgIds = find_pkg_interval(Table, NLProtocol),
+    PkgIds = find_pkg_interval(AddTable, NLProtocol),
     AddIntervals =
     lists:foldr( fun(X, A) ->
       {Intv, PkgId} = X,
-      TimeNextPkgId = find_timestamp_pkgid(Table, PkgId),
+      TimeNextPkgId = find_timestamp_pkgid(AddTable, PkgId),
       LTimeNextPkgId = binary_to_list(TimeNextPkgId),
       LTStapms = lists:last(string:tokens(LTimeNextPkgId, ",")),
       TStapms = list_to_integer(LTStapms) * 1000000,
@@ -813,21 +909,48 @@ analyse(EtsTable, NLProtocol) ->
     OIntervals
   end,
 
+  Intervals =
+  if(length(TIntervals) =:= 1) ->
+    [{_, [FirstTmsp]}] = TIntervals,
+    MinTimeStamp =
+    lists:foldr( fun(X, Min) ->
+      case X of
+        {{_Pkg, _Msg, Src, _Dst}, _} ->
+          NS = get_time_sent_interval(NLProtocol, Src, X, send_time),
+          NSVal = (NS < Min) and (NS > 0),
+          if NSVal -> NS;
+          true -> Min
+          end;
+        [{{_Pkg, _Msg, Src, _Dst}, _}] ->
+          NS = get_time_sent_interval(NLProtocol, Src, X, send_time),
+          NSVal = (NS < Min) and (NS > 0),
+          if NSVal -> NS;
+          true -> Min
+          end;
+        _ -> Min
+      end
+    end, 1000000000000, AddTable),
+    TT = [{15, [MinTimeStamp]} | TIntervals],
+    [{4, [FirstTmsp + 800000000]} | TT];
+  true ->
+    TIntervals
+  end,
+
   TableIntervals =
   lists:foldr( fun(X, Acc) ->
     case X of
       {{_Pkg, _Msg, Src, _Dst}, _} ->
         NS = get_time_sent_interval(NLProtocol, Src, X, send_time),
-        I = find_interval(NS, lists:reverse(Intervals)),
+        I = find_interval(NS, lists:reverse(Intervals), Is),
         [{I, X} | Acc];
       [{{_Pkg, _Msg, Src, _Dst}, _}] ->
         NS = get_time_sent_interval(NLProtocol, Src, X, send_time),
-        I = find_interval(NS, lists:reverse(Intervals)),
+        I = find_interval(NS, lists:reverse(Intervals), Is),
         [{I, X} | Acc];
       _ ->
         Acc
     end
-  end, [], Table),
+  end, [], AddTable),
 
 
   CountIntPkg =
@@ -841,32 +964,44 @@ analyse(EtsTable, NLProtocol) ->
     end
   end, {0, 0, 0}, TableIntervals),
 
-  [{path, Dir}] = ets:lookup(EtsTable, path),
+  %EtsSyncTable = ets:new(sync_links, [set, named_table]),
+  %SyncTable = sync_time(Table, NLProtocol, EtsSyncTable),
 
+  [{path, Dir}] = ets:lookup(EtsTable, path),
   file:delete(Dir ++ "/res.log"),
   file:write_file(Dir ++ "/res.log", io_lib:fwrite("~p ~n", [TableIntervals])),
 
   io:format(" ~p~n", [CountIntPkg]),
   io:format(" ~p~n", [Intervals]).
 
-find_interval(NS, Intervals) ->
-  { L, _Tmp } =
+find_interval(NS, Intervals, Is) ->
+  { LIntervals, L, _Tmp } =
   lists:foldr(
-    fun(_X, {A, I}) ->
+    fun(_X, {Intvs, A, I}) ->
       T = lists:nth(I, Intervals),
-      { [T | A], I + 1 }
-    end, {[], 1}, Intervals),
+      {Intv, _} = T,
+      { [Intv | Intvs], [T | A], I + 1 }
+    end, {[], [], 1}, Intervals),
 
-  %T15 = lists:nth(1, Intervals),
-  %T8 = lists:nth(2, Intervals),
-  %T4 = lists:nth(3, Intervals),
-  %L = [T15, T8, T4],
-  find_interval_helper(NS, L, 0).
+  Default =
+  if(length(Intervals) < 3) ->
+    lists:foldr(fun(X, A) ->
+    if (A == -1) ->
+      Member =  lists:member(X, LIntervals),
+      if Member -> -1;
+        true -> X
+      end;
+      true -> A
+      end
+    end, -1, Is);
+  true -> 15
+  end,
 
+  find_interval_helper(NS, L, 0, Default).
 
-find_interval_helper(_, [], NI) -> NI;
-find_interval_helper(_, [{_, []}, {_, []}, {_, []}], NI) -> NI;
-find_interval_helper(NS, L, NI) ->
+find_interval_helper(_, [], NI, _) -> NI;
+find_interval_helper(_, [{_, []}, {_, []}, {_, []}], NI, _) -> NI;
+find_interval_helper(NS, L, NI, Default) ->
   {IMax, TMax} = lists:foldr(
     fun(X, {CI, A})->
       {I, T} = X,
@@ -882,14 +1017,15 @@ find_interval_helper(NS, L, NI) ->
 
   case {IMax, TMax} of
     {nothing, -1} ->
-      find_interval_helper(NS, [], 0);
+      io:format("!!!!!!!!!!!!!!!! ~p~n", [Default]),
+      find_interval_helper(NS, [], Default, Default);
     _ ->
       NL = lists:foldr(fun(X, A)-> {I, T} = X, Member = lists:member(TMax, T), if Member -> NT = lists:delete(TMax, T), [ {I, NT}| A]; true -> [X | A] end end, [], L),
 
       if NS < TMax ->
-        find_interval_helper(NS, NL, NI);
+        find_interval_helper(NS, NL, NI, Default);
       true ->
-        find_interval_helper(NS, [], IMax)
+        find_interval_helper(NS, [], IMax, Default)
       end
   end.
 
