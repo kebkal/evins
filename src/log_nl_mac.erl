@@ -30,6 +30,12 @@ parse_send(HNode, EtsTable, MACProtocol, NL_Protocol, LogDir) ->
   fsm_rb:grep("XXXXXXXXXXXXXXXXXXXXXX"),
   readlines(HNode, EtsTable, MACProtocol, NL_Protocol, intervals, LogDir ++ "/parse_intervals.log"),
 
+  SourecAdd = (HNode == 7) and ((NL_Protocol == sncfloodrack) or (NL_Protocol == dpffloodrack)),
+  if SourecAdd ->
+    readlines(HNode, EtsTable, MACProtocol, NL_Protocol, source_data, LogDir ++ "/parse_intervals.log");
+  true -> nothing
+  end,
+
   file:delete(LogDir ++ "/parse_send.log"),
   ok = fsm_rb:start_log(LogDir ++ "/parse_send.log"),
   fsm_rb:grep("MAC_AT_SEND"),
@@ -54,6 +60,7 @@ get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, OLine) 
     Line ->
       ActionStr =
       case Action of
+        source_data -> "Source";
         intervals -> "handle_event";
         send -> "MAC_AT_SEND";
         recv -> "MAC_AT_RECV"
@@ -61,30 +68,40 @@ get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, OLine) 
       {ok, TimeReg} = re:compile("(.*)[0-9]+\.[0-9]+\.[0-9]+(.*)" ++ ActionStr),
       case re:run(Line, TimeReg, []) of
         {match, _Match} ->
-          if Action =:= intervals ->
-            Time = get_time(Line),
-            Interval = get_payl(MACProtocol, Action, Line),
+          case Action of
+            intervals ->
+              Time = get_time(Line),
+              Interval = get_payl(MACProtocol, Action, Line),
 
-            Res = ets:lookup(EtsTable, {interval, HNode, Interval}),
-            case Res of
-              [{_, Timestamp}] ->
-                ets:insert(EtsTable, {{interval, HNode, Interval}, [Time | Timestamp] });
-              _ ->
-                ets:insert(EtsTable, {{interval, HNode, Interval}, [Time] })
-            end,
-            get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, Line);
-          true ->
-            Time = get_time(OLine),
-            RTuple = get_tuple(Action, OLine),
-            Payl = get_payl(MACProtocol, Action, OLine),
-            extract_payl(HNode, EtsTable, Action, RTuple, NL_Protocol, Time, Payl),
-            get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, Line)
-          end;
+              Res = ets:lookup(EtsTable, {interval, HNode, Interval}),
+              case Res of
+                [{_, Timestamp}] ->
+                  ets:insert(EtsTable, {{interval, HNode, Interval}, [Time | Timestamp] });
+                _ ->
+                  ets:insert(EtsTable, {{interval, HNode, Interval}, [Time] })
+              end,
+              get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, Line);
+            _ ->
+              Time = get_time(OLine),
+              RTuple = get_tuple(Action, OLine),
+              Payl = get_payl(MACProtocol, Action, OLine),
+              extract_payl(HNode, EtsTable, Action, RTuple, NL_Protocol, Time, Payl),
+              get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, Line)
+            end;
         nomatch ->
-          if Action =:= intervals ->
-            get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, Line);
-          true ->
-            get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, OLine ++ Line)
+          case Action of
+            intervals ->
+              get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, Line);
+            source_data ->
+              case re:run(Line, "(.*)Source Data:(.*) Len:(.*)State:(.*) Total:(.*)Hops:([0-9]+)(.*)>>", [dotall,{capture, all_but_first, binary}]) of
+                {match, [_, M, _, S, _, H, _]} ->
+                  ets:insert(EtsTable, {{source_data, M}, {S, bin_to_num(H) } });
+                nomatch ->
+                  nothing
+              end,
+              get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, Line);
+            _ ->
+              get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, OLine ++ Line)
           end
       end
   end.
@@ -675,11 +692,20 @@ get_time_sent_interval(NLProtocol, Src, Pkg, Action) ->
            NLProtocol =:= dpffloodrack ->
       [{ IdTuple, {RelayTuple, AckTuple}}] = Pkg,
       {PkgId, Data, Src, _Dst} = IdTuple,
-      {{nodes_sent, _NS},
-      {nodes_recv, _NR},
-      {time_sent, LNSent},
-      {time_recv, _LNRecv},
-      {params, _Params}} = RelayTuple,
+      LNSent =
+      case RelayTuple of
+        {{nodes_sent, _NS},
+        {nodes_recv, _NR},
+        {time_sent, LNSentTmp},
+        {time_recv, _LNRecv},
+        {params, _Params},
+        {stats, _Stats}} -> LNSentTmp;
+        {{nodes_sent, _NS},
+        {nodes_recv, _NR},
+        {time_sent, LNSentTmp},
+        {time_recv, _LNRecv},
+        {params, _Params}} -> LNSentTmp
+      end,
 
       {ack, {
       {send_ack, _SendAck},
@@ -778,7 +804,7 @@ find_timestamp_pkgid_helper(Table, PkgId) ->
     end
   end, nothing, Table).
 
-prepare_add_info(Table, NLProtocol) ->
+prepare_add_info(EtsTable, Table, NLProtocol) ->
   NTable =
   lists:foldr( fun(X, Acc) ->
     case X of
@@ -841,6 +867,14 @@ prepare_add_info(Table, NLProtocol) ->
             [X | Acc]
         end;
       [{Id = {_Pkg, Msg, Src, _Dst}, {RelayTuple, AckTuple}}] ->
+        { State, Hops} =
+        case ets:lookup(EtsTable, {source_data, Msg}) of
+          [{{source_data, Msg}, {S, H}}] ->
+            {S, H};
+          _->
+            {nothing, nothing}
+        end,
+
         case re:run(Msg, "([^:]*):XXXXXXXXXXXXXXXXXXXXXX", [dotall,{capture, all_but_first, binary}]) of
           nomatch ->
             NSent = get_time_sent_interval(NLProtocol, Src, X, send_time),
@@ -859,8 +893,9 @@ prepare_add_info(Table, NLProtocol) ->
               {nodes_recv, NR},
               {time_sent, NLNSent},
               {time_recv, LNRecv},
-              {params, Params}},
-              [ [{Id, {NRelayTuple, AckTuple}}] | Acc];
+              {params, Params},
+              {stats, { State, Hops}}},
+              [ [{Id, {NRelayTuple, AckTuple }}] | Acc];
             true ->
               [X | Acc]
             end;
@@ -876,7 +911,7 @@ prepare_add_info(Table, NLProtocol) ->
 
 analyse(EtsTable, NLProtocol) ->
   Table = cat_data_ack(EtsTable),
-  AddTable = prepare_add_info(Table, NLProtocol),
+  AddTable = prepare_add_info(EtsTable, Table, NLProtocol),
 
   Is = [4, 8, 15],
 
