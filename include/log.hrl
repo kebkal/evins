@@ -26,9 +26,14 @@
 %% (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 %% THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+%-define(NODES, [7, 1, 9]).
+
+%SRC has to be the first in the list
+-define(SRC, 7).
+-define(INTERVALS, [4, 8, 15]).
 -define(NODES, [7, 1, 2, 3, 4, 5, 9]).
-%-define(NODES, [1, 2, 3, 4, 5, 7, 9]).
 -define(SOUND_SPEED, 1408.5).
+-define(SIGNAL_LENGTH, 0.387).
 
 -define(POSITION(T),
     case T of
