@@ -30,8 +30,8 @@
 
 %SRC has to be the first in the list
 -define(SRC, 7).
--define(INTERVALS, [4, 8, 15]).
--define(NODES, [7, 1, 2, 3, 4, 5, 9]).
+-define(INTERVALS, [15]).
+-define(NODES, [7, 1, 2, 3, 4, 5]).
 -define(SOUND_SPEED, 1408.5).
 -define(SIGNAL_LENGTH, 0.387).
 

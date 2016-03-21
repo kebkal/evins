@@ -227,13 +227,17 @@ get_payl(_, intervals, Line) ->
       nothing
   end;
 get_payl(csma_alh, _, Line) ->
-  case re:run(Line, "<<(.*)>>", [dotall,{capture, all_but_first, binary}]) of
-    {match, Match} ->
-      T = re:replace(Match,"<<|>>|\n","",[global, {return,list}]),
-      S = re:replace(T," ","",[global, {return,list}]),
-      LInt = lists:map(fun(X) -> {Int, _} = string:to_integer(X), Int end, string:tokens(S, ",")),
-      lists:foldr(fun(X, A) -> <<X, A/binary>> end, <<>>, LInt);
-    nomatch -> nothing
+  try
+    case re:run(Line, "<<(.*)>>", [dotall,{capture, all_but_first, binary}]) of
+      {match, Match} ->
+        T = re:replace(Match,"<<|>>|\n","",[global, {return,list}]),
+        S = re:replace(T," ","",[global, {return,list}]),
+        LInt = lists:map(fun(X) -> {Int, _} = string:to_integer(X), Int end, string:tokens(S, ",")),
+        lists:foldr(fun(X, A) -> <<X, A/binary>> end, <<>>, LInt);
+      nomatch -> nothing
+    end
+  catch error: _Reason ->
+    nothing
   end;
 get_payl(_, Action, Line) ->
   try
@@ -276,7 +280,9 @@ extract_payl(HNode, EtsTable, send, STuple, icrpr, Time, Payl, Add) ->
     _ ->
       nothing
   end;
-extract_payl(HNode, EtsTable, send, STuple, NLProtocol, Time, Payl, Add) when NLProtocol =:= sncfloodr;
+extract_payl(HNode, EtsTable, send, STuple, NLProtocol, Time, Payl, Add) when
+                                                                         NLProtocol =:= sensors;
+                                                                         NLProtocol =:= sncfloodr;
                                                                          NLProtocol =:= sncfloodrack;
                                                                          NLProtocol =:= dpffloodr;
                                                                          NLProtocol =:= dpffloodrack->
@@ -318,7 +324,9 @@ extract_payl(HNode, EtsTable, recv, RTuple, icrpr, Time, Payl, Add) ->
         nothing
     end
   end;
-extract_payl(HNode, EtsTable, recv, RTuple, NLProtocol, Time, Payl, Add) when NLProtocol=:= sncfloodr;
+extract_payl(HNode, EtsTable, recv, RTuple, NLProtocol, Time, Payl, Add) when
+                                                                         NLProtocol =:= sensors;
+                                                                         NLProtocol=:= sncfloodr;
                                                                          NLProtocol =:= sncfloodrack;
                                                                          NLProtocol =:= dpffloodr;
                                                                          NLProtocol =:= dpffloodrack->
@@ -1236,6 +1244,9 @@ prepare_add_info(EtsTable, Table, NLProtocol) ->
   NTable.
 
 analyse(EtsTable, MACProtocol, NLProtocol) ->
+  TTT = ets:match(EtsTable, '$1'),
+  io:format(" ~p~n", [TTT]),
+
   Table = cat_data_ack(EtsTable),
   AddTable = prepare_add_info(EtsTable, Table, NLProtocol),
 
@@ -1331,6 +1342,9 @@ analyse(EtsTable, MACProtocol, NLProtocol) ->
 
   {Title, TitleStats} =
   case NLProtocol of
+    sensors ->
+      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),PATH,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
+      io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,TimeExp(min),IfDeliveredDst~n", [])};
     sncfloodr ->
       {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),PATH,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
       io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,TimeExp(min),IfDeliveredDst~n", [])};
@@ -1440,7 +1454,8 @@ check_recv_state_ack(Stats) ->
     end
   end, {0, 0}, Stats).
 
-get_stats(Intv = 15, StatsTable, NLProtocol) when NLProtocol =:= sncfloodr;
+get_stats(Intv = 15, StatsTable, NLProtocol) when NLProtocol =:= sensors;
+                                                  NLProtocol =:= sncfloodr;
                                                   NLProtocol =:= dpffloodr->
   {Total, Count} =
   case ets:lookup(StatsTable, Intv) of
@@ -1519,7 +1534,8 @@ get_sent_time(Src, LNSent) ->
     end
   end, 0, LNSent).
 
-count_stats(SortInv, MACProtocol, NLProtocol, SyncTable, StatsTable) when NLProtocol =:= sncfloodr;
+count_stats(SortInv, MACProtocol, NLProtocol, SyncTable, StatsTable) when NLProtocol =:= sensors;
+                                                                          NLProtocol =:= sncfloodr;
                                                                           NLProtocol =:= dpffloodr ->
   lists:foldr(
     fun(X, {MinS, MaxS, AStr}) ->
@@ -1675,7 +1691,9 @@ getMultipath(EtsTable, PkgId, Data, LRecv, LRecvAck) ->
       {"", ""}
   end.
 
-convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable) when NLProtocol =:= sncfloodr;
+convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable) when
+                                                                          NLProtocol =:= sensors;
+                                                                          NLProtocol =:= sncfloodr;
                                                                           NLProtocol =:= dpffloodr ->
   lists:foldr(
     fun(X, AStr) ->
