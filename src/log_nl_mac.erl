@@ -1332,19 +1332,19 @@ analyse(EtsTable, MACProtocol, NLProtocol) ->
   {Title, TitleStats} =
   case NLProtocol of
     sncfloodr ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),PATH,[Addr1;Addr2;RSSi;Integrity;Velocity]~n", []),
+      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),PATH,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
       io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,TimeExp(min),IfDeliveredDst~n", [])};
     dpffloodr ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),PATH,[Addr1;Addr2;RSSi;Integrity;Velocity]~n", []),
+      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),PATH,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
       io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst~n", [])};
     icrpr ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,[Addr1;Addr2;RSSi;Integrity;Velocity]~n", []),
+      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
       io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst,IfDeliveredAck,Hops~n", [])};
     sncfloodrack ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,[Addr1;Addr2;RSSi;Integrity;Velocity]~n", []),
+      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
       io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst,IfDeliveredAck,Hops~n", [])};
     dpffloodrack ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,[Addr1;Addr2;RSSi;Integrity;Velocity]~n", []),
+      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
       io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst,IfDeliveredAck,Hops~n", [])}
   end,
 
@@ -1642,8 +1642,9 @@ getMultipath(EtsTable, PkgId, Data, LRecv, LRecvAck) ->
         fun(X, {DataA, AckA}) ->
             case X of
               {data, PkgId, HNode, FromAddr, Data, ResM} ->
-                Time = getTime(FromAddr, LRecv, recv),
-                if(Time =/= 0) ->
+                Time1 = getTime(FromAddr, LRecv, recv),
+                Time2 = getTime(HNode, LRecv, recv),
+                if (Time1 =/= 0) or (Time2 =/= 0) ->
                   PL = re:replace(ResM, "(    ;|  ;)", ";", [global, {return, list}]),
                   NL = re:replace(PL, "(     |   )", " ", [global, {return, list}]),
                   To = integer_to_list(HNode),
@@ -1654,8 +1655,9 @@ getMultipath(EtsTable, PkgId, Data, LRecv, LRecvAck) ->
                   {DataA, AckA}
                 end;
               {ack, PkgId, HNode, FromAddr, _Data, ResM} ->
-                Time = getTime(FromAddr, LRecvAck, recv_ack),
-                if(Time =/= 0) ->
+                Time1 = getTime(FromAddr, LRecvAck, recv_ack),
+                Time2 = getTime(HNode, LRecvAck, recv_ack),
+                 if (Time1 =/= 0) or (Time2 =/= 0) ->
                   PL = re:replace(ResM, "(    ;|  ;)", ";", [global, {return, list}]),
                   NL = re:replace(PL, "(     |   )", " ", [global, {return, list}]),
                   To = integer_to_list(HNode),
@@ -1673,12 +1675,12 @@ getMultipath(EtsTable, PkgId, Data, LRecv, LRecvAck) ->
       {"", ""}
   end.
 
-convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, _EtsTable) when NLProtocol =:= sncfloodr;
+convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable) when NLProtocol =:= sncfloodr;
                                                                           NLProtocol =:= dpffloodr ->
   lists:foldr(
     fun(X, AStr) ->
       {Intv, {IdTuple, RelayTuple}} = X,
-      {_PkgId, Data, Src, Dst} = IdTuple,
+      {PkgId, Data, Src, Dst} = IdTuple,
 
       {{nodes_sent, _NS},
       {nodes_recv, _NR},
@@ -1691,20 +1693,23 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, _EtsTable
         PkgLength = length(binary_to_list(Data)) + 4,
 
         {_DT, TimeTillDstF, PathDirect} = findPaths(Src, Dst, LNSent, [], LNRecv, 0, NLProtocol, DeltaTable, direct),
-        PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLength, TimeTillDstF, PathDirect, ParamsL],
 
-        T = io_lib:format("~w,~w,~w,~w,~w,~w,~w,~s,~s~n", PrintL),
+        {MultipathLDirect, _MultipathLAck} = getMultipath(EtsTable, PkgId, Data, LNRecv, []),
+
+        PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLength, TimeTillDstF, PathDirect, ParamsL, MultipathLDirect],
+
+        T = io_lib:format("~w,~w,~w,~w,~w,~w,~w,~s,~s,~s~n", PrintL),
         LT = lists:flatten(T),
         [ LT | AStr];
         true -> AStr
       end
     end, [], SyncTable);
 
-convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, _EtsTable) when NLProtocol =:= icrpr ->
+convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable) when NLProtocol =:= icrpr ->
   lists:foldr(
     fun(X, AStr) ->
       {Intv, [{ IdTuple, {RelayTuple, AckTuple}}]} = X,
-      {_PkgId, Data, Src, Dst} = IdTuple,
+      {PkgId, Data, Src, Dst} = IdTuple,
 
       {[_NS, _NR, LNSent, LNRecv, Params, _SPath, _RPath], _Stats } =
       case RelayTuple of
@@ -1764,8 +1769,10 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, _EtsTable
           TimeAckF
         end,
 
-        PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLength, TimeTillDstF, NTimeAckF, PathDirect, Hops, PathAck, ParamsL],
-        T = io_lib:format("~w,~w,~w,~w,~w,~w,~w,~w,~s,~w,~s,~s~n", PrintL),
+        {MultipathLDirect, MultipathLAck} = getMultipath(EtsTable, PkgId, Data, LNRecv, RecvAck),
+        PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLength, TimeTillDstF, NTimeAckF, PathDirect, Hops, PathAck, ParamsL, MultipathLDirect, MultipathLAck],
+        T = io_lib:format("~w,~w,~w,~w,~w,~w,~w,~w,~s,~w,~s,~s,~s,~s~n", PrintL),
+
         LT = lists:flatten(T),
         [ LT | AStr];
         true -> AStr
@@ -2034,7 +2041,7 @@ findPathsHelper(Src, Dst, LNSent, _SendAck, LNRecv, CurrPath, _Ns, [], _Hops, _N
     true ->
       Tuple
     end
-  end, {0, 100000000, []}, NPath),
+  end, {0, 100000000.0, []}, NPath),
 
   if (DT =/= 0) ->
     ets:insert(EtsTable, {{Src, Dst}, DT});
