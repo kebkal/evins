@@ -332,7 +332,7 @@ extract_payl(HNode, EtsTable, recv, RTuple, icrpr, Time, Payl, Add) ->
         {data, PkgID, RSrc, RDst, BData};
       ack ->
         Hops = nl_mac_hf:extract_ack(nothing, Data),
-        add_data(EtsTable, {PkgID, ack, Dst, Src}, {recv_ack, HNode, Time, RSrc, RDst, Hops}, Add),
+        add_data(EtsTable, {PkgID, ack, Dst, Src}, {recv_ack, HNode, Time, RSrc, RDst, Hops, Rssi, Integrity, Velocity}, Add),
         {ack, PkgID, RSrc, RDst, Data};
       dst_reached ->
         nothing;
@@ -354,7 +354,7 @@ extract_payl(HNode, EtsTable, recv, RTuple, sensors, Time, Payl, Add) ->
         {data, PkgID, RSrc, RDst, Data};
       ack ->
         Hops = nl_mac_hf:extract_ack(nothing, Data),
-        add_data(EtsTable, {PkgID, ack, Dst, Src}, {recv_ack, HNode, Time, RSrc, RDst, Hops}, Add),
+        add_data(EtsTable, {PkgID, ack, Dst, Src}, {recv_ack, HNode, Time, RSrc, RDst, Hops, Rssi, Integrity, Velocity}, Add),
         {ack, PkgID, RSrc, RDst, Data};
       dst_reached ->
         nothing;
@@ -380,7 +380,7 @@ extract_payl(HNode, EtsTable, recv, RTuple, NLProtocol, Time, Payl, Add) when
         {data, PkgID, RSrc, RDst, Data};
       ack ->
         Hops = nl_mac_hf:extract_ack(nothing, Data),
-        add_data(EtsTable, {PkgID, ack, Dst, Src}, {recv_ack, HNode, Time, RSrc, RDst, Hops}, Add),
+        add_data(EtsTable, {PkgID, ack, Dst, Src}, {recv_ack, HNode, Time, RSrc, RDst, Hops, Rssi, Integrity, Velocity}, Add),
         {ack, PkgID, RSrc, RDst, Data};
       dst_reached ->
         nothing;
@@ -414,8 +414,9 @@ add_data(EtsTable, IdTuple, VTuple, add) ->
               {paths_recv, RPaths} }}] ->
       add_exist_data(EtsTable, IdTuple, VTuple, {Ns, Nr, Ts, Tr, P, SPaths, RPaths});
     [{IdTuple, {{send_ack, Ns},
-              {recv_ack, Nr} }}] ->
-      add_exist_data(EtsTable, IdTuple, VTuple, {Ns, Nr});
+                {recv_ack, Nr},
+                {params_back, PB} }}] ->
+      add_exist_data(EtsTable, IdTuple, VTuple, {Ns, Nr, PB});
     _ ->
       add_new_data(EtsTable, IdTuple, VTuple)
   end.
@@ -424,10 +425,12 @@ add_new_data(EtsTable, IdTuple, VTuple) ->
   case VTuple of
     {send_ack, Src, RSrc, TimeSend, Hops} ->
       ets:insert(EtsTable, {IdTuple, {{send_ack, [{Src, RSrc, TimeSend, Hops}]},
-                                      {recv_ack, []}}});
-    {recv_ack, Src, TimeRecv, RSrc, RDst, Hops} ->
+                                      {recv_ack, []},
+                                      {params_back, []}}});
+    {recv_ack, Src, TimeRecv, RSrc, RDst, Hops, Rssi, Integrity, Velocity} ->
       ets:insert(EtsTable, {IdTuple, {{send_ack, []},
-                                      {recv_ack, [{Src, RSrc, RDst, TimeRecv, Hops}]}}});
+                                      {recv_ack, [{Src, RSrc, RDst, TimeRecv, Hops}]},
+                                      {params_back, [{Src, RSrc, Rssi, Integrity, Velocity}]}}});
     {send, Src, RSrc, TimeSend, Path} ->
       ets:insert(EtsTable, {IdTuple, {{nodes_sent, [{Src, RSrc}]},
                                       {nodes_recv, []},
@@ -460,17 +463,20 @@ add_new_data(EtsTable, IdTuple, VTuple) ->
                                       {params, [{Src, RSrc, Rssi, Integrity, Velocity}]}}})
   end.
 
-add_exist_data(EtsTable, IdTuple, VTuple, {Ns, Nr}) ->
+add_exist_data(EtsTable, IdTuple, VTuple, {Ns, Nr, PB}) ->
   case VTuple of
     {send_ack, Src, RSrc, TimeSend, Hops} ->
       NewNs = add_to_list(Ns, {Src, RSrc, TimeSend, Hops}),
       ets:insert(EtsTable, {IdTuple, {{send_ack, NewNs},
-                                      {recv_ack, Nr}}});
+                                      {recv_ack, Nr},
+                                      {params_back, PB}}});
 
-    {recv_ack, Src, TimeRecv, RSrc, RDst, Hops} ->
+    {recv_ack, Src, TimeRecv, RSrc, RDst, Hops, Rssi, Integrity, Velocity} ->
       NewNr = add_to_list(Nr, {Src, RSrc, RDst, TimeRecv, Hops}),
+      NewP = add_to_list(PB, {Src, RSrc, Rssi, Integrity, Velocity}),
       ets:insert(EtsTable, {IdTuple, {{send_ack, Ns},
-                                      {recv_ack, NewNr}}})
+                                      {recv_ack, NewNr},
+                                      {params_back, NewP}}})
   end;
 add_exist_data(EtsTable, IdTuple, VTuple, {Ns, Nr, Ts, Tr, P, SPaths, RPaths}) ->
   case VTuple of
@@ -583,7 +589,7 @@ sync_pkg(Pkg, NLProtocol, EtsTable, DeltaTable) ->
   case NLProtocol of
     icrpr ->
       {Intv, [{ IdTuple, {RelayTuple, AckTuple}}]} = Pkg,
-      {_PkgId, _Data, Src, Dst} = IdTuple,
+      {_PkgId, Data, Src, Dst} = IdTuple,
 
       {[NS, NR, LNSent, LNRecv, Params, SPath, RPath], Stats } =
       case RelayTuple of
@@ -609,16 +615,18 @@ sync_pkg(Pkg, NLProtocol, EtsTable, DeltaTable) ->
 
       {ack, {
       {send_ack, SendAck},
-      {recv_ack, RecvAck}}} = AckTuple,
+      {recv_ack, RecvAck},
+      {params_back, PB}}} = AckTuple,
 
       ets:insert(EtsTable, {sync_neighbours, [Src]}),
       [Ns, NewLNSent, NewLNRecv] = start_sync_neighbour(Src, Dst, LNSent, LNRecv, DeltaTable),
-      [NewSendAck, NewRecvAck] = sync_ack(Src, Dst, SendAck, RecvAck, Ns, Stats, DeltaTable),
+      [NewSendAck, NewRecvAck] = sync_ack(Src, Dst, SendAck, RecvAck, Ns, Stats, DeltaTable, Data),
 
       NewAckTuple =
       {ack, {
       {send_ack, NewSendAck},
-      {recv_ack, NewRecvAck}}},
+      {recv_ack, NewRecvAck},
+      {params_back, PB}}},
 
       SyncRelayTuple =
       case Stats of
@@ -646,7 +654,7 @@ sync_pkg(Pkg, NLProtocol, EtsTable, DeltaTable) ->
            NLProtocol =:= dpffloodrack ->
 
       {Intv, [{ IdTuple, {RelayTuple, AckTuple}}]} = Pkg,
-      {_PkgId, _Data, Src, Dst} = IdTuple,
+      {_PkgId, Data, Src, Dst} = IdTuple,
 
       {[NS, NR, LNSent, LNRecv, Params], Stats } =
       case RelayTuple of
@@ -668,11 +676,12 @@ sync_pkg(Pkg, NLProtocol, EtsTable, DeltaTable) ->
 
       {ack, {
       {send_ack, SendAck},
-      {recv_ack, RecvAck}}} = AckTuple,
+      {recv_ack, RecvAck},
+      {params_back, PB}}} = AckTuple,
 
       ets:insert(EtsTable, {sync_neighbours, [Src]}),
       [Ns, NewLNSent, NewLNRecv] = start_sync_neighbour(Src, Dst, LNSent, LNRecv, DeltaTable),
-      [NewSendAck, NewRecvAck] = sync_ack(Src, Dst, SendAck, RecvAck, Ns, Stats, DeltaTable),
+      [NewSendAck, NewRecvAck] = sync_ack(Src, Dst, SendAck, RecvAck, Ns, Stats, DeltaTable, Data),
 
       SyncRelayTuple =
       case Stats of
@@ -694,7 +703,8 @@ sync_pkg(Pkg, NLProtocol, EtsTable, DeltaTable) ->
       NewAckTuple =
       {ack, {
       {send_ack, NewSendAck},
-      {recv_ack, NewRecvAck}}},
+      {recv_ack, NewRecvAck},
+      {params_back, PB}}},
 
       %TODO SYnc Ack tuple
       {Intv, [{ IdTuple, {SyncRelayTuple, NewAckTuple}}]};
@@ -723,7 +733,7 @@ sync_pkg(Pkg, NLProtocol, EtsTable, DeltaTable) ->
       {Intv, { IdTuple, SyncRelayTuple}}
   end.
 
-sync_ack(Src, Dst, SendAck, RecvAck, Ns, Stats, DeltaTable) ->
+sync_ack(Src, Dst, SendAck, RecvAck, Ns, Stats, DeltaTable, Data) ->
   NewSendAck =
   lists:foldr(
   fun(X, A) ->
@@ -753,20 +763,20 @@ sync_ack(Src, Dst, SendAck, RecvAck, Ns, Stats, DeltaTable) ->
   [NNewSendAck, NewRecvAck] =
   if CheckAck -> [NewSendAck, RecvAck];
   true ->
-    spec_sync_ack(Src, Dst, NewSendAck, RecvAck, Ns, Stats, DeltaTable)
+    spec_sync_ack(Src, Dst, NewSendAck, RecvAck, Ns, Stats, DeltaTable, Data)
   end,
 
   ets:delete_all_objects(DeltaTable),
   [NNewSendAck, NewRecvAck].
 
-spec_sync_ack(Src, Dst, SendAck, RecvAck, Ns, Stats, DeltaTable) ->
+spec_sync_ack(Src, Dst, SendAck, RecvAck, Ns, Stats, DeltaTable, Data) ->
   case Stats of
     {<<"Delivered">>, Hops} ->
-      spec_sync_ack_helper(Src, Dst, SendAck, RecvAck, Ns, Hops, DeltaTable);
+      spec_sync_ack_helper(Src, Dst, SendAck, RecvAck, Ns, Hops, DeltaTable, Data);
     _ -> [SendAck, RecvAck]
   end.
 
-spec_sync_ack_helper(Src, Dst, SendAck, RecvAck, Ns, Hops, DeltaTable) ->
+spec_sync_ack_helper(Src, Dst, SendAck, RecvAck, Ns, Hops, DeltaTable, Data) ->
   Neighbours =
   lists:foldr(
   fun(X, A) ->
@@ -789,7 +799,10 @@ spec_sync_ack_helper(Src, Dst, SendAck, RecvAck, Ns, Hops, DeltaTable) ->
               TS = TimeSent, % + Delta,
               TSL = [ {Addr, BDst, TS, NHops} | A],
               Dist = distance(Src, Addr),
-              TransmissionTime = (Dist / ?SOUND_SPEED + ?SIGNAL_LENGTH)  * 1000000,
+
+              PkgLength = length(binary_to_list(Data)) + 4,
+              SignalL = (?SIGNAL_LENGTH * PkgLength) / 17,
+              TransmissionTime = (Dist / ?SOUND_SPEED + SignalL)  * 1000000,
 
               NumberHops =
               if(BDst == Dst) -> 0;
@@ -874,7 +887,7 @@ sync(Src, RAddr, _LNSent, _LNRecv, DeltaTable, NewLNSent, NewLNRecv, State) ->
     fun(X, A) ->
       case X of
         {RAddr, Src, RTimeStamp} ->
-          DT = find_delta_t(Src, Send_time, RAddr, RTimeStamp),
+          DT = find_delta_t(Src, Send_time, RAddr, RTimeStamp, 0),
           case ets:lookup(DeltaTable, RAddr) of
             [{RAddr, _}] -> nothing;
             _  -> ets:insert(DeltaTable, { RAddr, DT})
@@ -919,12 +932,12 @@ get_time_sent_interval_t(Addr, T) ->
   end, 0, T).
 
 
-find_delta_t(Src, STimeStamp, Dst, RTimeStamp) ->
+find_delta_t(Src, STimeStamp, Dst, RTimeStamp, PkgLength) ->
   Dist = distance(Src, Dst),
+  SignalL = (?SIGNAL_LENGTH * PkgLength) / 17,
   %TODO length  of impulse
-  TransmissionTime = (Dist / ?SOUND_SPEED + ?SIGNAL_LENGTH)  * 1000000,
+  TransmissionTime = (Dist / ?SOUND_SPEED + SignalL)  * 1000000,
   RTimeStamp - STimeStamp - TransmissionTime.
-
 
 changeNs(Ns, Src, Addr, St) ->
   lists:foldr(
@@ -1045,7 +1058,8 @@ get_time_sent_interval(NLProtocol, Src, Pkg, Action) ->
 
       {ack, {
       {send_ack, _SendAck},
-      {recv_ack, _RecvAck}}} = AckTuple,
+      {recv_ack, _RecvAck},
+      {params_back, _PB}}} = AckTuple,
 
       case Action of
         send_time ->
@@ -1077,7 +1091,9 @@ get_time_sent_interval(NLProtocol, Src, Pkg, Action) ->
 
       {ack, {
       {send_ack, _SendAck},
-      {recv_ack, _RecvAck}}} = AckTuple,
+      {recv_ack, _RecvAck},
+      {params_back, _PB}}} = AckTuple,
+
       case Action of
         send_time ->
           lists:foldr(fun(X, A) -> case X of {Src, _, Time} -> Time; _ -> A end end, 0, LNSent);
@@ -1338,14 +1354,12 @@ cat_sensor_ack(EtsTable) ->
                {time_recv, RecvAck},
                {params, Params}} = RelayTuple,
 
-               NewParams = Params ++ ParamsSrc,
-
                NewRelayTuple =
                {{nodes_sent, LNSent},
                {nodes_recv, LNRecv},
                {time_sent, TimeSent},
                {time_recv, TimeRecv},
-               {params, NewParams}},
+               {params, ParamsSrc}},
 
                 NewSendAck =
                 lists:foldr(
@@ -1361,9 +1375,9 @@ cat_sensor_ack(EtsTable) ->
                   [ {XASrc, XADst, 255, XASrcTime, 0} | AA]
                 end, [], RecvAck),
 
-              { {ack, {{send_ack, NewSendAck}, {recv_ack, NewRecvAck}} } , DataA, NewRelayTuple};
+              { {ack, {{send_ack, NewSendAck}, {recv_ack, NewRecvAck}, {params_back, Params}} } , DataA, NewRelayTuple};
           _ ->
-            {{ack, {{send_ack, []}, {recv_ack, []}} }, DataX,  SrcRelayTuple}
+            {{ack, {{send_ack, []}, {recv_ack, []}, {params_back, []}} }, DataX,  SrcRelayTuple}
           end,
 
           NewX = {{PkgID, Data, ?SRC, Dst}, {NewRelayTupleT,  AckTuple} },
@@ -1391,19 +1405,30 @@ analyse(EtsTable, MACProtocol, sensors) ->
 
   DeltaTable = ets:new(delta_table, [set, named_table]),
 
-  {_Title, _TitleStats} =
-  {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,Data,TimeTillDst(s),TimeAck(s),PATH,PATHACK,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
+  {_Title, TitleStats} =
+  {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLengthDirect,PkgLengthAck,Data,TimeTillDst(s),TimeAck(s),PATH,PATHACK,ParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity],ParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity],MultipathDirect:[Addr1;Addr2;Multipath],MultipathAck:[Addr1;Addr2;Multipath]~n", []),
   io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst,IfDeliveredAck,Hops~n", [])},
 
   ets:delete_all_objects(DeltaTable),
   A15 = convet_to_csv(15, MACProtocol, sensors, TableIntervals, DeltaTable, EtsTable),
+
+  StatsTable = ets:new(stats_table, [set, named_table]),
+  {ExpStart15, ExpEnd15, Stats15} = count_stats(15, MACProtocol, sensors, TableIntervals, StatsTable),
+  GetStats15 = get_stats(15, StatsTable, sensors),
+  LengthExp15 = (ExpEnd15 - ExpStart15) / 1000000 / 60,
+  [SLengthExp15] =  io_lib:format("~.6f", [LengthExp15]),
+  Desr = "\n[Hops/Count/CountAck/TotalCount] --> LengthExp \n",
+  ResStats15 = TitleStats ++ Stats15 ++ Desr  ++ "  "++ GetStats15 ++ "  " ++ SLengthExp15  ++ "\n",
 
   [{path, Dir}] = ets:lookup(EtsTable, path),
   file:delete(Dir ++ "/res.log"),
   file:write_file(Dir ++ "/res.log", io_lib:fwrite("~p ~n", [TableIntervals])),
 
   file:delete(Dir ++ "/res_csv.xls"),
-  file:write_file(Dir ++ "/res_csv.xls", io_lib:fwrite("~s ~n", [A15]));
+  file:write_file(Dir ++ "/res_csv.xls", io_lib:fwrite("~s ~n", [A15])),
+
+  file:delete(Dir ++ "/res_stats_csv.xls"),
+  file:write_file(Dir ++ "/res_stats_csv.xls", io_lib:fwrite("~s ~n", [ResStats15]));
 
 analyse(EtsTable, MACProtocol, NLProtocol) ->
   Table = cat_data_ack(EtsTable),
@@ -1508,13 +1533,13 @@ analyse(EtsTable, MACProtocol, NLProtocol) ->
       {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),PATH,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
       io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst~n", [])};
     icrpr ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
+      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLengthDirect,PkgLengthAck,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,ParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity],ParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity],MultipathDirect:[Addr1;Addr2;Multipath],MultipathAck:[Addr1;Addr2;Multipath]~n", []),
       io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst,IfDeliveredAck,Hops~n", [])};
     sncfloodrack ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
+      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLengthDirect,PkgLengthAck,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,ParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity],ParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity],MultipathDirect:[Addr1;Addr2;Multipath],MultipathAck:[Addr1;Addr2;Multipath]~n", []),
       io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst,IfDeliveredAck,Hops~n", [])};
     dpffloodrack ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
+      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLengthDirect,PkgLengthAck,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,ParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity],ParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity],MultipathDirect:[Addr1;Addr2;Multipath],MultipathAck:[Addr1;Addr2;Multipath]~n", []),
       io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst,IfDeliveredAck,Hops~n", [])}
   end,
 
@@ -1746,7 +1771,8 @@ count_stats(SortInv, MACProtocol, NLProtocol, SyncTable, StatsTable) when NLProt
 
       {ack, {
       {send_ack, _SendAck},
-      {recv_ack, RecvAck}}} = AckTuple,
+      {recv_ack, RecvAck},
+      {params_back, _PB}}} = AckTuple,
 
       if (Intv == SortInv) ->
         StateRecv  = check_recv(Dst, LNRecv),
@@ -1762,7 +1788,8 @@ count_stats(SortInv, MACProtocol, NLProtocol, SyncTable, StatsTable) when NLProt
       end
   end, {0, 0, []}, SyncTable);
 
-count_stats(SortInv, MACProtocol, NLProtocol, SyncTable, StatsTable) when NLProtocol =:= sncfloodrack;
+count_stats(SortInv, MACProtocol, NLProtocol, SyncTable, StatsTable) when NLProtocol =:= sensors;
+                                                                          NLProtocol =:= sncfloodrack;
                                                                           NLProtocol =:= dpffloodrack ->
   lists:foldr(
     fun(X, {MinS, MaxS, AStr}) ->
@@ -1789,7 +1816,8 @@ count_stats(SortInv, MACProtocol, NLProtocol, SyncTable, StatsTable) when NLProt
 
       {ack, {
       {send_ack, _SendAck},
-      {recv_ack, RecvAck}}} = AckTuple,
+      {recv_ack, RecvAck},
+      {params_back, _PB}}} = AckTuple,
 
       if (Intv == SortInv) ->
         StateRecv  = check_recv(Dst, LNRecv),
@@ -1805,12 +1833,31 @@ count_stats(SortInv, MACProtocol, NLProtocol, SyncTable, StatsTable) when NLProt
       end
     end, {0, 0, []}, SyncTable).
 
-getMultipath(EtsTable, PkgId, Data, LRecv, LRecvAck) ->
+getMultipath(EtsTable, PkgId, Data, LRecv, LRecvAck, NLProtocol) ->
   case ets:lookup(EtsTable, multipath) of
     [{multipath, MultTuple}] ->
         lists:foldr(
         fun(X, {DataA, AckA}) ->
             case X of
+              {data, PkgId, HNode, FromAddr, _Data, ResM} when NLProtocol == sensors->
+                Time1 = getTime(FromAddr, LRecv, recv),
+                Time2 = getTime(HNode, LRecv, recv),
+                if (Time1 =/= 0) or (Time2 =/= 0) ->
+                  PL = re:replace(ResM, "(    ;|  ;)", ";", [global, {return, list}]),
+                  NL = re:replace(PL, "(     |   )", " ", [global, {return, list}]),
+                  To = integer_to_list(HNode),
+                  From = integer_to_list(FromAddr),
+                  Str = To ++ ";" ++ From ++ ";" ++ NL,
+                  Length = length(binary_to_list(Data)),
+                  if ( Length > 10) ->
+                    {Str, AckA  ++ DataA};
+                  true ->
+                    {Str ++ DataA, AckA}
+                  end;
+                true ->
+                  {DataA, AckA}
+                end;
+
               {data, PkgId, HNode, FromAddr, Data, ResM} ->
                 Time1 = getTime(FromAddr, LRecv, recv),
                 Time2 = getTime(HNode, LRecv, recv),
@@ -1824,6 +1871,7 @@ getMultipath(EtsTable, PkgId, Data, LRecv, LRecvAck) ->
                 true ->
                   {DataA, AckA}
                 end;
+
               {ack, PkgId, HNode, FromAddr, _Data, ResM} ->
                 Time1 = getTime(FromAddr, LRecvAck, recv_ack),
                 Time2 = getTime(HNode, LRecvAck, recv_ack),
@@ -1863,9 +1911,9 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
         ParamsL = getParams(Params),
         PkgLength = length(binary_to_list(Data)) + 4,
 
-        {_DT, TimeTillDstF, PathDirect} = findPaths(Src, Dst, LNSent, [], LNRecv, 0, NLProtocol, DeltaTable, direct),
+        {_DT, TimeTillDstF, PathDirect} = findPaths(Src, Dst, LNSent, [], LNRecv, 0, NLProtocol, DeltaTable, PkgLength, direct),
 
-        {MultipathLDirect, _MultipathLAck} = getMultipath(EtsTable, PkgId, Data, LNRecv, []),
+        {MultipathLDirect, _MultipathLAck} = getMultipath(EtsTable, PkgId, Data, LNRecv, [], NLProtocol),
 
         PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLength, TimeTillDstF, PathDirect, ParamsL, MultipathLDirect],
 
@@ -1906,11 +1954,13 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
 
       {ack, {
       {send_ack, SendAck},
-      {recv_ack, RecvAck}}} = AckTuple,
+      {recv_ack, RecvAck},
+      {params_back, PB}}} = AckTuple,
 
       if (Intv == SortInv) ->
         St = getTime(Src, LNSent, send),
         ParamsL = getParams(Params),
+        ParamsBL = getParams(PB),
 
         {TimeAck, Hops, RSrc} =
         case getTime(Src, RecvAck, recv_ack) of
@@ -1920,16 +1970,16 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
         end,
 
         [TimeAckL] = io_lib:format("~.4f", [TimeAck]),
-        PkgLength = length(binary_to_list(Data)) + 4,
+        {PkgLengthD, PkgLengthBack} = {length(binary_to_list(Data)) + 4, 5},
         {TimeAckF, _} = string:to_float(TimeAckL),
 
-        {_DT, TimeTillDstF, PathDirect} = findPaths(Src, Dst, LNSent, SendAck, LNRecv, Hops, NLProtocol, DeltaTable, direct),
-        {_DTAck, _TimeAckFTmp, PathAck} = findPaths(Dst, Src, LNSent, SendAck, RecvAck, Hops, NLProtocol, DeltaTable, back),
+        {_DT, TimeTillDstF, PathDirect} = findPaths(Src, Dst, LNSent, SendAck, LNRecv, Hops, NLProtocol, DeltaTable, PkgLengthD, direct),
+        {_DTAck, _TimeAckFTmp, PathAck} = findPaths(Dst, Src, LNSent, SendAck, RecvAck, Hops, NLProtocol, DeltaTable, PkgLengthBack, back),
 
         NTimeAckF =
         if (TimeAckF < 0 ) or (TimeAckF > 100) ->
           Rt = getTime(RSrc, LNRecv, {recv_src, Src}),
-          DT = find_delta_t(Src, St, RSrc, Rt),
+          DT = find_delta_t(Src, St, RSrc, Rt, PkgLengthBack),
           {NTimeAck, _, _} =
           case getTime(Src, RecvAck, recv_ack) of
             {TRta, TH, TRS} -> {TRta, TH, TRS};
@@ -1940,9 +1990,9 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
           TimeAckF
         end,
 
-        {MultipathLDirect, MultipathLAck} = getMultipath(EtsTable, PkgId, Data, LNRecv, RecvAck),
-        PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLength, TimeTillDstF, NTimeAckF, PathDirect, Hops, PathAck, ParamsL, MultipathLDirect, MultipathLAck],
-        T = io_lib:format("~w,~w,~w,~w,~w,~w,~w,~w,~s,~w,~s,~s,~s,~s~n", PrintL),
+        {MultipathLDirect, MultipathLAck} = getMultipath(EtsTable, PkgId, Data, LNRecv, RecvAck, NLProtocol),
+        PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLengthD, PkgLengthBack, TimeTillDstF, NTimeAckF, PathDirect, Hops, PathAck, ParamsL, ParamsBL, MultipathLDirect, MultipathLAck],
+        T = io_lib:format("~w,~w,~w,~w,~w,~w,~w,~w,~w,~s,~w,~s,~s,~s,~s,~s~n", PrintL),
 
         LT = lists:flatten(T),
         [ LT | AStr];
@@ -1978,11 +2028,13 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
 
       {ack, {
       {send_ack, SendAck},
-      {recv_ack, RecvAck}}} = AckTuple,
+      {recv_ack, RecvAck},
+      {params_back, PB}}} = AckTuple,
 
       if (Intv == SortInv) ->
         St = getTime(Src, LNSent, send),
         ParamsL = getParams(Params),
+        ParamsBL = getParams(PB),
 
         {TimeAck, Hops, RSrc} =
         case getTime(Src, RecvAck, recv_ack) of
@@ -1993,19 +2045,23 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
 
         [TimeAckL] = io_lib:format("~.4f", [TimeAck]),
 
-        % TODO PkgLength
-        PkgLength = 20, %length(binary_to_list(Data)) + 4,
+        {PkgLengthD, PkgLengthBack} = 
+        if (NLProtocol =:= sensors) ->
+          {6, length(binary_to_list(Data)) + 5};
+        true ->
+          {length(binary_to_list(Data)) + 4, 5}
+        end,
 
 
         {TimeAckF, _} = string:to_float(TimeAckL),
 
-        {_DT, TimeTillDstF, PathDirect} = findPaths(Src, Dst, LNSent, SendAck, LNRecv, Hops, NLProtocol, DeltaTable, direct),
-        {_DTAck, _TimeAckFTmp, PathAck} = findPaths(Dst, Src, LNSent, SendAck, RecvAck, Hops, NLProtocol, DeltaTable, back),
+        {_DT, TimeTillDstF, PathDirect} = findPaths(Src, Dst, LNSent, SendAck, LNRecv, Hops, NLProtocol, DeltaTable, PkgLengthD, direct),
+        {_DTAck, _TimeAckFTmp, PathAck} = findPaths(Dst, Src, LNSent, SendAck, RecvAck, Hops, NLProtocol, DeltaTable, PkgLengthBack, back),
 
         NTimeAckF =
         if (TimeAckF < 0 ) or (TimeAckF > 100) ->
           Rt = getTime(RSrc, LNRecv, {recv_src, Src}),
-          DT = find_delta_t(Src, St, RSrc, Rt),
+          DT = find_delta_t(Src, St, RSrc, Rt, PkgLengthBack),
           {NTimeAck, _, _} =
           case getTime(Src, RecvAck, recv_ack) of
             {TRta, TH, TRS} -> {TRta, TH, TRS};
@@ -2013,14 +2069,14 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
           end,
           TT = (NTimeAck - DT - St) / 1000000,
 
-          if(TT - TimeTillDstF < 3) and (TT > 0) ->
+          if(TT - TimeTillDstF < 1.5) and (TT > 0) ->
             TT * 2;
           true ->
-            TT
+            %TODO!
+            if (TT > 100) ->  TimeTillDstF * 2 + 0.2; true -> TT end
           end;
 
         true ->
-          % TEST
           if(TimeAckF - TimeTillDstF < 1.5) and (TimeAckF > 0) ->
             TimeTillDstF * 2 + TimeAckF;
           true ->
@@ -2028,14 +2084,7 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
           end
         end,
 
-        {TimeTo, TimeBack, PathsD, PatshA} =
-        if (TimeTillDstF > 100) ->
-          {0, 0, "", ""};
-        true ->
-          {TimeTillDstF, NTimeAckF, PathDirect, PathAck}
-        end,
-
-        {MultipathLDirect, MultipathLAck} = getMultipath(EtsTable, PkgId, Data, LNRecv, RecvAck),
+        {MultipathLDirect, MultipathLAck} = getMultipath(EtsTable, PkgId, Data, LNRecv, RecvAck, NLProtocol),
 
         T =
         if (NLProtocol =:= sensors) ->
@@ -2050,11 +2099,25 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
               parse_sensor_data(Sensor, SData)
           end,
 
-          PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLength, SensorDataPayload, TimeTo, TimeBack, PathsD, PatshA, ParamsL, MultipathLDirect, MultipathLAck],
-          io_lib:format("~w,~w,~w,~w,~w,~w,~s,~w,~w,~s,~s,~s,~s,~s~n", PrintL);
+          {TimeTo, TimeBack, PathsD, PatshA, SensorDataT, PkgLB} =
+          if (TimeTillDstF > 100) ->
+            {0, 0, "", "", "", 0};
+          true ->
+            {TimeTillDstF, NTimeAckF, PathDirect, PathAck, SensorDataPayload, PkgLengthBack}
+          end,
+
+          PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLengthD, PkgLB, SensorDataT, TimeTo, TimeBack, PathsD, PatshA, ParamsL, ParamsBL, MultipathLDirect, MultipathLAck],
+          io_lib:format("~w,~w,~w,~w,~w,~w,~w,~s,~w,~w,~s,~s,~s,~s,~s,~s~n", PrintL);
         true ->
-          PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLength, TimeTo, TimeBack, PathsD, Hops, PatshA, ParamsL, MultipathLDirect, MultipathLAck],
-          io_lib:format("~w,~w,~w,~w,~w,~w,~w,~w,~s,~w,~s,~s,~s,~s~n", PrintL)
+          {TimeTo, TimeBack, PathsD, PatshA} =
+          if (TimeTillDstF > 100) ->
+            {0, 0, "", ""};
+          true ->
+            {TimeTillDstF, NTimeAckF, PathDirect, PathAck}
+          end,
+
+          PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLengthD, PkgLengthBack, TimeTo, TimeBack, PathsD, Hops, PatshA, ParamsL, ParamsBL, MultipathLDirect, MultipathLAck],
+          io_lib:format("~w,~w,~w,~w,~w,~w,~w,~w,~w,~s,~w,~s,~s,~s,~s,~s~n", PrintL)
         end,
 
 
@@ -2065,11 +2128,11 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
     end, [], SyncTable).
 
 
-findPaths(Src, Dst, LNSent, SendAck, LNRecv, Hops, NLProtocol, EtsTable, Direction) ->
+findPaths(Src, Dst, LNSent, SendAck, LNRecv, Hops, NLProtocol, EtsTable, PkgLength, Direction) ->
   Ns = get_rcv_neighbours(Dst, LNRecv),
   CurrPath = form_path(Dst, Ns, [{Dst}]),
   ProcessedNs = [Dst],
-  findPathsHelper(Src, Dst, LNSent, SendAck, LNRecv, CurrPath, Ns, ProcessedNs, Hops, NLProtocol, EtsTable, Direction).
+  findPathsHelper(Src, Dst, LNSent, SendAck, LNRecv, CurrPath, Ns, ProcessedNs, Hops, NLProtocol, EtsTable, PkgLength, Direction).
 
 delete_no_coplete_path(Src, Dst, CurrPath) ->
   NCurrPath = lists:flatten(CurrPath),
@@ -2137,9 +2200,9 @@ path_to_str(NPath, direct) ->
     ""
   end.
 
-sync_time_extra([], _Src, _Dst, _LNSent, _LNRecv, _Direction) ->
+sync_time_extra([], _Src, _Dst, _LNSent, _LNRecv, _PkgLength, _Direction) ->
   {0, 0, 0};
-sync_time_extra(TPShortPath, Src, Dst, LNSent, LNRecv, _Direction) ->
+sync_time_extra(TPShortPath, Src, Dst, LNSent, LNRecv, PkgLength, _Direction) ->
   PShortPath = tuple_to_list(TPShortPath),
   Send_time = get_sent_time(Src, LNSent),
   ShortPath = [X || X <- PShortPath, X =/= Src],
@@ -2152,10 +2215,10 @@ sync_time_extra(TPShortPath, Src, Dst, LNSent, LNRecv, _Direction) ->
     fun(XX, Tuple) ->
       case XX of
         {X, ASrc, RTimeStamp} ->
-          DT = find_delta_t(ASrc, ATime, X, RTimeStamp),
+          DT = find_delta_t(ASrc, ATime, X, RTimeStamp, PkgLength),
           {ASrc, X, DT, RTimeStamp - DT, RTimeStamp};
         {X, ASrc, _, RTimeStamp, _} ->
-          DT = find_delta_t(ASrc, ATime, X, RTimeStamp),
+          DT = find_delta_t(ASrc, ATime, X, RTimeStamp, PkgLength),
           {ASrc, X, DT, RTimeStamp - DT, RTimeStamp};
         _ -> Tuple
       end
@@ -2195,7 +2258,7 @@ sync_time_extra(TPShortPath, Src, Dst, LNSent, LNRecv, _Direction) ->
   {MTime, LastDelta, ResDiff}.
 
 
-findPathsHelper(Src, Dst, _LNSent, SendAck, LNRecvAck, CurrPath, _Ns, [], Hops, icrpr, _EtsTable, back) ->
+findPathsHelper(Src, Dst, _LNSent, SendAck, LNRecvAck, CurrPath, _Ns, [], Hops, icrpr, _EtsTable, PkgLength, back) ->
   % delete all without Src and Dst
   % create path from Src to Dst
   NPath = delete_no_coplete_path(Src, Dst, CurrPath),
@@ -2221,14 +2284,14 @@ findPathsHelper(Src, Dst, _LNSent, SendAck, LNRecvAck, CurrPath, _Ns, [], Hops, 
   if OnePath == [] -> {0, 0, ""};
     true ->
     [OnePathT] = OnePath,
-    {Time, Delta, _Diff} = sync_time_extra(OnePathT, Src, Dst, SendAck, LNRecvAck, back),
+    {Time, Delta, _Diff} = sync_time_extra(OnePathT, Src, Dst, SendAck, LNRecvAck, PkgLength, back),
     {Delta, Time, path_to_str(OnePath, back)}
   end;
 
-findPathsHelper(Src, Dst, _LNSent, _SendAck, _LNRecvAck, CurrPath, _Ns, [], _Hops, _NLProtocol, _EtsTable, back) ->
+findPathsHelper(Src, Dst, _LNSent, _SendAck, _LNRecvAck, CurrPath, _Ns, [], _Hops, _NLProtocol, _EtsTable, _PkgLength, back) ->
    NPath = delete_no_coplete_path(Src, Dst, CurrPath),
    {0, 0, path_to_str(NPath, back)};
-findPathsHelper(Src, Dst, LNSent, _SendAck, LNRecv, CurrPath, _Ns, [], _Hops, _NLProtocol, EtsTable, direct) ->
+findPathsHelper(Src, Dst, LNSent, _SendAck, LNRecv, CurrPath, _Ns, [], _Hops, _NLProtocol, EtsTable, PkgLength, direct) ->
   % delete all without Src and Dst
   % create path from Src to Dst
   NPath = delete_no_coplete_path(Src, Dst, CurrPath),
@@ -2236,7 +2299,7 @@ findPathsHelper(Src, Dst, LNSent, _SendAck, LNRecv, CurrPath, _Ns, [], _Hops, _N
   {DT, MinTime, NewPaths} =
   lists:foldr(
   fun(Path, Tuple = {_DeltaT, MinTimeT, A}) ->
-    {Time, Delta, Diff} = sync_time_extra(Path, Src, Dst, LNSent, LNRecv, direct),
+    {Time, Delta, Diff} = sync_time_extra(Path, Src, Dst, LNSent, LNRecv, PkgLength, direct),
     if (Diff == true) ->
       TimeT =
       if (Time < MinTimeT) -> Time; true -> MinTimeT end,
@@ -2295,7 +2358,7 @@ findPathsHelper(Src, Dst, LNSent, _SendAck, LNRecv, CurrPath, _Ns, [], _Hops, _N
 
   Tuple;
 
-findPathsHelper(Src, Dst, LNSent, SendAck, LNRecv, CurrPath, Ns, ProcessedNs, Hops, NLProtocol, EtsTable, Direction) ->
+findPathsHelper(Src, Dst, LNSent, SendAck, LNRecv, CurrPath, Ns, ProcessedNs, Hops, NLProtocol, EtsTable, PkgLength, Direction) ->
   {TNs, TCurrPath, TProcessedNs} =
   lists:foldr(
   fun(X, {NNs, NCurrPath, NProcessedNs}) ->
@@ -2330,9 +2393,9 @@ findPathsHelper(Src, Dst, LNSent, SendAck, LNRecv, CurrPath, Ns, ProcessedNs, Ho
   end, true, RDublNs),
 
   if CheckNs ->
-    findPathsHelper(Src, Dst, LNSent, SendAck, LNRecv, TCurrPath, RDublNs, [], Hops, NLProtocol, EtsTable, Direction);
+    findPathsHelper(Src, Dst, LNSent, SendAck, LNRecv, TCurrPath, RDublNs, [], Hops, NLProtocol, EtsTable, PkgLength, Direction);
   true ->
-    findPathsHelper(Src, Dst, LNSent, SendAck, LNRecv, TCurrPath, RDublNs, RDProcessedNs, Hops, NLProtocol, EtsTable, Direction)
+    findPathsHelper(Src, Dst, LNSent, SendAck, LNRecv, TCurrPath, RDublNs, RDProcessedNs, Hops, NLProtocol, EtsTable, PkgLength, Direction)
   end.
 
 get_sent_time_list(Src, LNSent) ->
