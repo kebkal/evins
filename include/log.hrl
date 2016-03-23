@@ -46,3 +46,43 @@
         7 -> {46.8226389, 143.1418333};
         9 -> {46.8277778, 143.1166667}
     end).
+
+% TODO!!!!
+
+-define(TYPEMSGMAX, 3).
+-define(TYPESENSORMAX, 5).
+
+-define(LIST_ALL_SENSORS, [no_sensor,
+           pressure,
+           conductivity,
+           oxygen]).
+
+-define(SENTYPEMSG2NUM(N),
+  case N of
+      error  -> 0;
+      get_data  -> 1;
+      recv_data  -> 2
+  end).
+
+-define(SENTYPESENSOR2NUM(N),
+  case N of
+      no_sensor  -> 0;
+      pressure   -> 1;
+      conductivity -> 2;
+      oxygen -> 3
+  end).
+
+-define(SENNUM2TYPEMSG(N),
+  case N of
+      0 -> error;
+      1 -> get_data;
+      2 -> recv_data
+  end).
+
+-define(SENNUM2TYPESENSOR(N),
+  case N of
+      0 -> no_sensor;
+      1 -> pressure;
+      2 -> conductivity;
+      3 -> oxygen
+  end).
