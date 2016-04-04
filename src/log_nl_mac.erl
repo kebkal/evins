@@ -1405,9 +1405,9 @@ analyse(EtsTable, MACProtocol, sensors) ->
 
   DeltaTable = ets:new(delta_table, [set, named_table]),
 
-  {_Title, TitleStats} =
-  {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLengthDirect,PkgLengthAck,Data,TimeTillDst(s),TimeAck(s),PATH,PATHACK,ParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity],ParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity],MultipathDirect:[Addr1;Addr2;Multipath],MultipathAck:[Addr1;Addr2;Multipath]~n", []),
-  io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst,IfDeliveredAck,Hops~n", [])},
+  {Title, TitleStats} =
+  {io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tPkgLengthDirect\tPkgLengthAck\tData\tTimeTillDst(s)\tTimeAck(s)\tPATH\tPATHACK\tParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity]\tParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity]\tMultipathDirect:[Addr1;Addr2;Multipath]\tMultipathAck:[Addr1;Addr2;Multipath]~n", []),
+  io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tIfDeliveredDst\tIfDeliveredAck\tHops~n", [])},
 
   ets:delete_all_objects(DeltaTable),
   A15 = convet_to_csv(15, MACProtocol, sensors, TableIntervals, DeltaTable, EtsTable),
@@ -1425,8 +1425,8 @@ analyse(EtsTable, MACProtocol, sensors) ->
   file:write_file(Dir ++ "/res.log", io_lib:fwrite("~p ~n", [TableIntervals])),
 
   file:delete(Dir ++ "/res_csv.xls"),
-  file:write_file(Dir ++ "/res_csv.xls", io_lib:fwrite("~s ~n", [A15])),
-
+  file:write_file(Dir ++ "/res_csv.xls", io_lib:fwrite("~s ~n", [Title ++ A15])),
+  
   file:delete(Dir ++ "/res_stats_csv.xls"),
   file:write_file(Dir ++ "/res_stats_csv.xls", io_lib:fwrite("~s ~n", [ResStats15]));
 
@@ -1527,20 +1527,20 @@ analyse(EtsTable, MACProtocol, NLProtocol) ->
   {Title, TitleStats} =
   case NLProtocol of
     sncfloodr ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),PATH,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
-      io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,TimeExp(min),IfDeliveredDst~n", [])};
+      {io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tPkgLength\tTimeTillDst(s)\tPATH\t[Addr1;Addr2;RSSi;Integrity;Velocity]\t[Addr1;Addr2;Multipath]~n", []),
+      io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tIfDeliveredDst~n", [])};
     dpffloodr ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLength,TimeTillDst(s),PATH,[Addr1;Addr2;RSSi;Integrity;Velocity],[Addr1;Addr2;Multipath]~n", []),
-      io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst~n", [])};
+      {io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tPkgLength\tTimeTillDst(s)\tPATH\t[Addr1;Addr2;RSSi;Integrity;Velocity]\t[Addr1;Addr2;Multipath]~n", []),
+      io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tIfDeliveredDst~n", [])};
     icrpr ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLengthDirect,PkgLengthAck,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,ParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity],ParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity],MultipathDirect:[Addr1;Addr2;Multipath],MultipathAck:[Addr1;Addr2;Multipath]~n", []),
-      io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst,IfDeliveredAck,Hops~n", [])};
+      {io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tPkgLengthDirect\tPkgLengthAck\tTimeTillDst(s)\tTimeAck(s)\tPATH\tHops\tPATHACK\tParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity]\tParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity]\tMultipathDirect:[Addr1;Addr2;Multipath]\tMultipathAck:[Addr1;Addr2;Multipath]~n", []),
+      io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tIfDeliveredDst\tIfDeliveredAck\tHops~n", [])};
     sncfloodrack ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLengthDirect,PkgLengthAck,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,ParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity],ParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity],MultipathDirect:[Addr1;Addr2;Multipath],MultipathAck:[Addr1;Addr2;Multipath]~n", []),
+      {io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tPkgLengthDirect\tPkgLengthAck\tTimeTillDst(s)\tTimeAck(s)\tPATH\tHops\tPATHACK\tParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity]\tParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity]\tMultipathDirect:[Addr1;Addr2;Multipath]\tMultipathAck:[Addr1;Addr2;Multipath]~n", []),
       io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst,IfDeliveredAck,Hops~n", [])};
     dpffloodrack ->
-      {io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,PkgLengthDirect,PkgLengthAck,TimeTillDst(s),TimeAck(s),PATH,Hops,PATHACK,ParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity],ParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity],MultipathDirect:[Addr1;Addr2;Multipath],MultipathAck:[Addr1;Addr2;Multipath]~n", []),
-      io_lib:format("MACProtocol,NLProtocol,Interval,Src,Dst,IfDeliveredDst,IfDeliveredAck,Hops~n", [])}
+      {io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tPkgLengthDirect\tPkgLengthAck\tTimeTillDst(s)\tTimeAck(s)\tPATH\tHops\tPATHACK\tParamsDirect:[Addr1;Addr2;RSSi;Integrity;Velocity]\tParamsAck:[Addr1;Addr2;RSSi;Integrity;Velocity]\tMultipathDirect:[Addr1;Addr2;Multipath]\tMultipathAck:[Addr1;Addr2;Multipath]~n", []),
+      io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tIfDeliveredDst\tIfDeliveredAck\tHops~n", [])}
   end,
 
   ets:delete_all_objects(DeltaTable),
@@ -1599,7 +1599,19 @@ check_recv(Dst, LNRecv) ->
     end
   end, 0, LNRecv).
 
-check_recv_ack(Src, RecvAck, Stats) ->
+check_recv_ack(Src, RecvAck, _Stats, StateRecv, sensors) ->
+  {ResState, ResHops} =
+  lists:foldr(
+  fun(X, A) ->
+    case X of
+      {Src, _, _, _, _} when StateRecv == 1 -> {1, 1};
+      _ -> A
+    end
+  end, {0, 0}, RecvAck),
+
+  [ResState, ResHops];
+
+check_recv_ack(Src, RecvAck, Stats, _StateRecv, _NLProtocol) ->
   Res =
   lists:foldr(
   fun(X, A) ->
@@ -1635,8 +1647,8 @@ check_recv_state_ack(Stats) ->
     end
   end, {0, 0}, Stats).
 
-get_stats(Intv = 15, StatsTable, NLProtocol) when NLProtocol =:= sncfloodr;
-                                                  NLProtocol =:= dpffloodr->
+get_stats(Intv, StatsTable, NLProtocol) when NLProtocol =:= sncfloodr;
+                                             NLProtocol =:= dpffloodr->
   {Total, Count} =
   case ets:lookup(StatsTable, Intv) of
     [{Intv, {TC, C}}] -> {TC, C};
@@ -1731,7 +1743,7 @@ count_stats(SortInv, MACProtocol, NLProtocol, SyncTable, StatsTable) when NLProt
         StateRecv  = check_recv(Dst, LNRecv),
         count_stats_helper(Intv, StateRecv, StatsTable),
         PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, StateRecv],
-        T = io_lib:format("~w,~w,~w,~w,~w,~w~n", PrintL),
+        T = io_lib:format("~w\t~w\t~w\t~w\t~w\t~w~n", PrintL),
         LT = lists:flatten(T),
 
         {TMinS, TMaxS} = check_limit_exp(Data, Src, LNSent, MinS, MaxS),
@@ -1776,10 +1788,10 @@ count_stats(SortInv, MACProtocol, NLProtocol, SyncTable, StatsTable) when NLProt
 
       if (Intv == SortInv) ->
         StateRecv  = check_recv(Dst, LNRecv),
-        [StateRecvAck, Hops]  = check_recv_ack(Src, RecvAck, Stats),
+        [StateRecvAck, Hops]  = check_recv_ack(Src, RecvAck, Stats, StateRecv, NLProtocol),
         count_stats_helper(Intv, StateRecv, StateRecvAck, Hops, StatsTable),
         PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, StateRecv, StateRecvAck, Hops],
-        T = io_lib:format("~w,~w,~w,~w,~w,~w,~w,~w~n", PrintL),
+        T = io_lib:format("~w\t~w\t~w\t~w\t~w\t~w\t~w\t~w~n", PrintL),
         LT = lists:flatten(T),
         {TMinS, TMaxS} = check_limit_exp(Data, Src, LNSent, MinS, MaxS),
         {TMinS, TMaxS, [ LT | AStr]};
@@ -1821,10 +1833,10 @@ count_stats(SortInv, MACProtocol, NLProtocol, SyncTable, StatsTable) when NLProt
 
       if (Intv == SortInv) ->
         StateRecv  = check_recv(Dst, LNRecv),
-        [StateRecvAck, Hops]  = check_recv_ack(Src, RecvAck, Stats),
+        [StateRecvAck, Hops]  = check_recv_ack(Src, RecvAck, Stats, StateRecv, NLProtocol),
         count_stats_helper(Intv, StateRecv, StateRecvAck, Hops, StatsTable),
         PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, StateRecv, StateRecvAck, Hops],
-        T = io_lib:format("~w,~w,~w,~w,~w,~w,~w,~w~n", PrintL),
+        T = io_lib:format("~w\t~w\t~w\t~w\t~w\t~w\t~w\t~w~n", PrintL),
         LT = lists:flatten(T),
         {TMinS, TMaxS} = check_limit_exp(Data, Src, LNSent, MinS, MaxS),
         {TMinS, TMaxS, [ LT | AStr]};
@@ -1839,25 +1851,53 @@ getMultipath(EtsTable, PkgId, Data, LRecv, LRecvAck, NLProtocol) ->
         lists:foldr(
         fun(X, {DataA, AckA}) ->
             case X of
-              {data, PkgId, HNode, FromAddr, _Data, ResM} when NLProtocol == sensors->
-                Time1 = getTime(FromAddr, LRecv, recv),
-                Time2 = getTime(HNode, LRecv, recv),
-                if (Time1 =/= 0) or (Time2 =/= 0) ->
+              {data, PkgId, HNode, FromAddr, DataM, ResM} when NLProtocol == sensors->
                   PL = re:replace(ResM, "(    ;|  ;)", ";", [global, {return, list}]),
                   NL = re:replace(PL, "(     |   )", " ", [global, {return, list}]),
                   To = integer_to_list(HNode),
                   From = integer_to_list(FromAddr),
                   Str = To ++ ";" ++ From ++ ";" ++ NL,
-                  Length = length(binary_to_list(Data)),
-                  if ( Length > 10) ->
-                    {Str, AckA  ++ DataA};
-                  true ->
-                    {Str ++ DataA, AckA}
-                  end;
-                true ->
-                  {DataA, AckA}
-                end;
 
+                  Length = length(binary_to_list(DataM)),
+                  if ( Length > 3) ->
+                    Time1 = getTime(FromAddr, LRecvAck, recv_ack),
+                    Time2 = getTime(HNode, LRecvAck, recv_ack),
+                    if (Time1 =/= 0) or (Time2 =/= 0) ->
+                      {Str, AckA  ++ DataA};
+                    true ->
+                      {DataA, AckA}
+                    end;
+                  true ->
+                    Time1 = getTime(FromAddr, LRecv, recv),
+                    Time2 = getTime(HNode, LRecv, recv),
+                    if (Time1 =/= 0) or (Time2 =/= 0) ->
+                        {Str ++ DataA, AckA};
+                      true ->
+                        {DataA, AckA}
+                    end
+                  end;
+              {data, PkgIdD, HNode, FromAddr, DataM, ResM} when NLProtocol == sensors->
+                  MinTime = 10,
+                  PkgDiff = PkgIdD - PkgId,
+                  IfPkg = (PkgDiff < MinTime) and (PkgDiff > 0),
+                  PL = re:replace(ResM, "(    ;|  ;)", ";", [global, {return, list}]),
+                  NL = re:replace(PL, "(     |   )", " ", [global, {return, list}]),
+                  To = integer_to_list(HNode),
+                  From = integer_to_list(FromAddr),
+                  Str = To ++ ";" ++ From ++ ";" ++ NL,
+
+                  Length = length(binary_to_list(DataM)),
+                  if ( Length > 10) ->
+                    {DataA, AckA};
+                  true ->
+                    Time1 = getTime(FromAddr, LRecv, recv),
+                    Time2 = getTime(HNode, LRecv, recv),
+                    if ((Time1 =/= 0) or (Time2 =/= 0)) and IfPkg ->
+                        {Str ++ DataA, AckA};
+                      true ->
+                        {DataA, AckA}
+                    end
+                  end;
               {data, PkgId, HNode, FromAddr, Data, ResM} ->
                 Time1 = getTime(FromAddr, LRecv, recv),
                 Time2 = getTime(HNode, LRecv, recv),
@@ -1917,7 +1957,7 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
 
         PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLength, TimeTillDstF, PathDirect, ParamsL, MultipathLDirect],
 
-        T = io_lib:format("~w,~w,~w,~w,~w,~w,~w,~s,~s,~s~n", PrintL),
+        T = io_lib:format("~w\t~w\t~w\t~w\t~w\t~w\t~w\t~s\t~s\t~s~n", PrintL),
         LT = lists:flatten(T),
         [ LT | AStr];
         true -> AStr
@@ -1992,7 +2032,7 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
 
         {MultipathLDirect, MultipathLAck} = getMultipath(EtsTable, PkgId, Data, LNRecv, RecvAck, NLProtocol),
         PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLengthD, PkgLengthBack, TimeTillDstF, NTimeAckF, PathDirect, Hops, PathAck, ParamsL, ParamsBL, MultipathLDirect, MultipathLAck],
-        T = io_lib:format("~w,~w,~w,~w,~w,~w,~w,~w,~w,~s,~w,~s,~s,~s,~s,~s~n", PrintL),
+        T = io_lib:format("~w\t~w\t~w\t~w\t~w\t~w\t~w\t~w\t~w\t~s\t~w\t~s\t~s\t~s\t~s\t~s~n", PrintL),
 
         LT = lists:flatten(T),
         [ LT | AStr];
@@ -2099,15 +2139,15 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
               parse_sensor_data(Sensor, SData)
           end,
 
-          {TimeTo, TimeBack, PathsD, PatshA, SensorDataT, PkgLB} =
+          {TimeTo, TimeBack, PathsD, PatshA, SensorDataT, PkgLB, MultipathLDirectT, MultipathLAckT} =
           if (TimeTillDstF > 100) ->
-            {0, 0, "", "", "", 0};
+            {0, 0, "", "", "", 0, "", ""};
           true ->
-            {TimeTillDstF, NTimeAckF, PathDirect, PathAck, SensorDataPayload, PkgLengthBack}
+            {TimeTillDstF, NTimeAckF, PathDirect, PathAck, SensorDataPayload, PkgLengthBack, MultipathLDirect, MultipathLAck}
           end,
 
-          PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLengthD, PkgLB, SensorDataT, TimeTo, TimeBack, PathsD, PatshA, ParamsL, ParamsBL, MultipathLDirect, MultipathLAck],
-          io_lib:format("~w,~w,~w,~w,~w,~w,~w,~s,~w,~w,~s,~s,~s,~s,~s,~s~n", PrintL);
+          PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLengthD, PkgLB, SensorDataT, TimeTo, TimeBack, PathsD, PatshA, ParamsL, ParamsBL, MultipathLDirectT, MultipathLAckT],
+          io_lib:format("~w\t~w\t~w\t~w\t~w\t~w\t~w\t~s\t~w\t~w\t~s\t~s\t~s\t~s\t~s\t~s~n", PrintL);
         true ->
           {TimeTo, TimeBack, PathsD, PatshA} =
           if (TimeTillDstF > 100) ->
@@ -2117,7 +2157,7 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
           end,
 
           PrintL = [MACProtocol, NLProtocol, Intv, Src, Dst, PkgLengthD, PkgLengthBack, TimeTo, TimeBack, PathsD, Hops, PatshA, ParamsL, ParamsBL, MultipathLDirect, MultipathLAck],
-          io_lib:format("~w,~w,~w,~w,~w,~w,~w,~w,~w,~s,~w,~s,~s,~s,~s,~s~n", PrintL)
+          io_lib:format("~w\t~w\t~w\t~w\t~w\t~w\t~w\t~w\t~w\t~s\t~w\t~s\t~s\t~s\t~s\t~s~n", PrintL)
         end,
 
 
@@ -2171,8 +2211,8 @@ path_to_str(NPath, back) ->
   lists:foldr(
   fun(X, A) ->
      XT = tuple_to_list(X),
-     PStr = lists:foldr( fun(XX, AA) -> integer_to_list(XX) ++ "->" ++ AA end, "", XT),
-     S = string:left(PStr, length(PStr) - 2, $.),
+     PStr = lists:foldr( fun(XX, AA) -> integer_to_list(XX) ++ "," ++ AA end, "", XT),
+     S = string:left(PStr, length(PStr) - 1, $.),
      S ++ ";" ++ A
   end, "", NPath),
 
@@ -2189,8 +2229,8 @@ path_to_str(NPath, direct) ->
      {Time, Path} = X,
      [STime] = io_lib:format("~.4f", [Time]),
      XT = tuple_to_list(Path),
-     PStr = lists:foldr( fun(XX, AA) -> integer_to_list(XX) ++ "->" ++ AA end, "", XT),
-     S = string:left(PStr, length(PStr) - 2, $.),
+     PStr = lists:foldr( fun(XX, AA) -> integer_to_list(XX) ++ "," ++ AA end, "", XT),
+     S = string:left(PStr, length(PStr) - 1, $.),
      STime ++ ";" ++ S ++ ";" ++ A
   end, "", NPath),
 
@@ -2606,17 +2646,17 @@ extract_payl_oxygen(Data) ->
     C2Amp = io_lib:format("~.1f",[BC2Amp]),
     RawTemp = io_lib:format("~.1f",[BRawTemp]),
 
-   "MEASUREMENT\t" ++ M1 ++ "\t" ++ M2 ++ "\t" ++
-    "O2Concentration[uM]\t" ++ Concentration ++ "\t" ++
-    "AirSaturation[%]\t" ++ AirSaturation ++ "\t" ++
-    "Temperature[Deg.C]\t" ++ Temperature ++ "\t" ++
-    "CalPhase[Deg]\t" ++ CalPhase ++ "\t" ++
-    "TCPhase[Deg]\t" ++ TCPhase ++ "\t" ++
-    "C1RPh[Deg]\t" ++ C1RPh ++ "\t" ++
-    "C2RPh[Deg]\t" ++ C2RPh ++ "\t" ++
-    "C1Amp[mV]\t" ++ C1Amp ++ "\t" ++
-    "C2Amp[mV]\t" ++ C2Amp ++ "\t" ++
-    "RawTemp[mV]\t" ++ RawTemp
+   "MEASUREMENT," ++ M1 ++ "," ++ M2 ++ "," ++
+    "O2Concentration[uM]," ++ Concentration ++ "," ++
+    "AirSaturation[%]," ++ AirSaturation ++ "," ++
+    "Temperature[Deg.C]," ++ Temperature ++ "," ++
+    "CalPhase[Deg]," ++ CalPhase ++ "," ++
+    "TCPhase[Deg]," ++ TCPhase ++ "," ++
+    "C1RPh[Deg]," ++ C1RPh ++ "," ++
+    "C2RPh[Deg]," ++ C2RPh ++ "," ++
+    "C1Amp[mV]," ++ C1Amp ++ "," ++
+    "C2Amp[mV]," ++ C2Amp ++ "," ++
+    "RawTemp[mV]," ++ RawTemp
   catch error: _Reason ->
     nothing
   end.
@@ -2636,14 +2676,14 @@ extract_payl_conductivity(Data) ->
     ZAmp = float_to_list(BZAmp, [{scientific, 6}]),
     RawTemp = float_to_list(BRawTemp, [{scientific, 6}]),
 
-    "MEASUREMENT\t" ++ M1 ++ "\t" ++ M2 ++ "\t" ++
-    "Conductivity[mS/cm]\t " ++ Conductivity ++ "\t" ++
-    "Temperature[Deg.C]\t" ++ Temperature ++ "\t" ++
-    "Conductance[mS]\t" ++ Conductance ++ "\t" ++
-    "RawCond0[LSB]\t" ++ RawCond0 ++ "\t" ++
-    "RawCond1[LSB]\t" ++ RawCond1 ++ "\t" ++
-    "ZAmp[mV]\t" ++ ZAmp ++ "\t" ++
-    "RawTemp[mV]\t" ++ RawTemp
+    "MEASUREMENT," ++ M1 ++ "," ++ M2 ++ "," ++
+    "Conductivity[mS/cm], " ++ Conductivity ++ "," ++
+    "Temperature[Deg.C]," ++ Temperature ++ "," ++
+    "Conductance[mS]," ++ Conductance ++ "," ++
+    "RawCond0[LSB]," ++ RawCond0 ++ "," ++
+    "RawCond1[LSB]," ++ RawCond1 ++ "," ++
+    "ZAmp[mV]," ++ ZAmp ++ "," ++
+    "RawTemp[mV]," ++ RawTemp
   catch error: _Reason ->
     nothing
   end.
