@@ -174,19 +174,18 @@ get_all_lines(HNode, EtsTable, MACProtocol, NL_Protocol, Action, Device, OLine, 
   end.
 
 get_time(Line) ->
-  {ok, TimeReg} = re:compile("[0-9]+\.[0-9]+\.[0-9]+"),
-  case re:run(Line, TimeReg, [{capture, first, list}]) of
+  case re:run(Line, "([^0m])[0-9]+\.[0-9]+\.[0-9]+  *", [{capture, first, list}]) of
     {match, Match} ->
       [Time] = Match,
       {match, [BMega, BSec, BMicro]} =
       re:run(Time, "([^.]*).([^.]*).([^.]*)", [dotall,{capture, all_but_first, binary}]),
       Mega = bin_to_num(BMega),
       Sec = bin_to_num(BSec),
-      Micro = bin_to_num(BMicro),
+      SMicro = list_to_binary(re:replace(BMicro, " ", "", [global, {return, list}])),
+      Micro = bin_to_num(SMicro),
       Mega * 1000000 * 1000000 + Sec * 1000000 + Micro;
     nomatch -> nothing
   end.
-
 
 get_tuple(send, Line) ->
   RecvRegexp = "at,([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),.*",
@@ -325,6 +324,7 @@ extract_payl(HNode, EtsTable, recv, RTuple, icrpr, Time, Payl, Add) ->
   true ->
     [RSrc, RDst, Rssi, Integrity, Velocity] = RTuple,
     [Flag, PkgID, Src, Dst, Data] = nl_mac_hf:extract_payload_nl_flag(Payl),
+    try
     case nl_mac_hf:num2flag(Flag, nl) of
       data ->
         [Path, BData] = nl_mac_hf:extract_path_data(nothing, Data),
@@ -338,6 +338,9 @@ extract_payl(HNode, EtsTable, recv, RTuple, icrpr, Time, Payl, Add) ->
         nothing;
       _ ->
         nothing
+    end
+    catch error: _Reason ->
+          nothing
     end
   end;
 
@@ -373,19 +376,23 @@ extract_payl(HNode, EtsTable, recv, RTuple, NLProtocol, Time, Payl, Add) when
     nothing;
   true ->
     [RSrc, RDst, Rssi, Integrity, Velocity] = RTuple,
-    [Flag, PkgID, Src, Dst, Data] = nl_mac_hf:extract_payload_nl_flag(Payl),
-    case nl_mac_hf:num2flag(Flag, nl) of
-      data ->
-        add_data(EtsTable, {PkgID, Data, Src, Dst}, {recv, HNode, Time, RSrc, RDst, Rssi, Integrity, Velocity}, Add),
-        {data, PkgID, RSrc, RDst, Data};
-      ack ->
-        Hops = nl_mac_hf:extract_ack(nothing, Data),
-        add_data(EtsTable, {PkgID, ack, Dst, Src}, {recv_ack, HNode, Time, RSrc, RDst, Hops, Rssi, Integrity, Velocity}, Add),
-        {ack, PkgID, RSrc, RDst, Data};
-      dst_reached ->
-        nothing;
-      _ ->
-        nothing
+    try
+      [Flag, PkgID, Src, Dst, Data] = nl_mac_hf:extract_payload_nl_flag(Payl),
+      case nl_mac_hf:num2flag(Flag, nl) of
+        data ->
+          add_data(EtsTable, {PkgID, Data, Src, Dst}, {recv, HNode, Time, RSrc, RDst, Rssi, Integrity, Velocity}, Add),
+          {data, PkgID, RSrc, RDst, Data};
+        ack ->
+          Hops = nl_mac_hf:extract_ack(nothing, Data),
+          add_data(EtsTable, {PkgID, ack, Dst, Src}, {recv_ack, HNode, Time, RSrc, RDst, Hops, Rssi, Integrity, Velocity}, Add),
+          {ack, PkgID, RSrc, RDst, Data};
+        dst_reached ->
+          nothing;
+        _ ->
+          nothing
+      end
+      catch error: _Reason ->
+          nothing
     end
   end.
 
@@ -532,7 +539,11 @@ add_to_list(List, Val) ->
 bin_to_num(Bin) ->
   N = binary_to_list(Bin),
   case string:to_float(N) of
-    {error, no_float} -> list_to_integer(N);
+    {error, no_float} ->
+      if N =/= [] ->
+        list_to_integer(N);
+      true -> 0
+      end;
     {F, _Rest} -> F
   end.
 
@@ -1120,70 +1131,6 @@ get_time_sent_interval(NLProtocol, Src, Pkg, Action) ->
       end
   end.
 
-find_pkg_interval(Table, NLProtocol) ->
-  lists:foldr( fun(X, Acc) ->
-    case X of
-      {{_Pkg, Msg, Src, _Dst}, _} ->
-        case re:run(Msg, "([^:]*):XXXXXXXXXXXXXXXXXXXXXX", [dotall,{capture, all_but_first, binary}]) of
-          {match,[Interval]} ->
-            NS = get_time_sent_interval(NLProtocol, Src, X, send_pkg),
-            Res = lists:foldr(fun(XX, A) -> case XX of {Interval, _} -> true; _ -> A end end, false, Acc),
-            if Res =:= true ->
-              Acc;
-            true ->
-              [ {Interval, NS} | Acc]
-            end;
-          nomatch ->
-            Acc
-        end;
-      [{{_Pkg, Msg, Src, _Dst}, _}] ->
-        case re:run(Msg, "([^:]*):XXXXXXXXXXXXXXXXXXXXXX", [dotall,{capture, all_but_first, binary}]) of
-          {match,[Interval]} ->
-            NS = get_time_sent_interval(NLProtocol, Src, X, send_pkg),
-            Res = lists:foldr(fun(XX, A) -> case XX of {Interval, _} -> true; _ -> A end end, false, Acc),
-            if Res =:= true ->
-              Acc;
-            true ->
-              [ {Interval, NS} | Acc]
-            end;
-          nomatch ->
-            Acc
-        end;
-      _ ->
-        Acc
-    end
-  end, [], Table).
-
-find_timestamp_pkgid(Table, PkgId) ->
-  {DT, _} =
-  lists:foldr(
-  fun(_X, {D, A}) ->
-    if D ==  nothing ->
-      case find_timestamp_pkgid_helper(Table, A) of
-        nothing -> {nothing, A + 1};
-        Data -> {Data, A}
-      end;
-    true ->
-      {D, A}
-    end
-  end, {nothing, PkgId + 1}, Table),
-  DT.
-
-find_timestamp_pkgid_helper(Table, PkgId) ->
-  lists:foldr(
-  fun(X, A) ->
-    if A =/= nothing -> A;
-    true ->
-      case X of
-        {{PkgId, Msg, _Src, _Dst}, _} ->
-          Msg;
-        [{{PkgId, Msg, _Src, _Dst}, _}] ->
-          Msg;
-        _ ->
-          nothing
-      end
-    end
-  end, nothing, Table).
 
 prepare_add_info(EtsTable, Table, NLProtocol) ->
   NTable =
@@ -1426,7 +1373,7 @@ analyse(EtsTable, MACProtocol, sensors) ->
 
   file:delete(Dir ++ "/res_csv.xls"),
   file:write_file(Dir ++ "/res_csv.xls", io_lib:fwrite("~s ~n", [Title ++ A15])),
-  
+
   file:delete(Dir ++ "/res_stats_csv.xls"),
   file:write_file(Dir ++ "/res_stats_csv.xls", io_lib:fwrite("~s ~n", [ResStats15]));
 
@@ -1434,96 +1381,63 @@ analyse(EtsTable, MACProtocol, NLProtocol) ->
   Table = cat_data_ack(EtsTable),
   AddTable = prepare_add_info(EtsTable, Table, NLProtocol),
 
-  Is = ?INTERVALS,
-
-  OIntervals =
-  lists:foldr(fun(X, A) ->
-    Res = ets:lookup(EtsTable, {interval, ?SRC, X}),
-    case Res of
-      [{_, Timestamp}] ->
-        [{X, Timestamp} | A];
-      _ -> A
-    end
-  end, [], Is),
-
-  TIntervals =
-  if(length(OIntervals) < 3) ->
-    PkgIds = find_pkg_interval(AddTable, NLProtocol),
-    AddIntervals =
-    lists:foldr( fun(X, A) ->
-      {Intv, PkgId} = X,
-      TimeNextPkgId = find_timestamp_pkgid(AddTable, PkgId),
-      LTimeNextPkgId = binary_to_list(TimeNextPkgId),
-      LTStapms = lists:last(string:tokens(LTimeNextPkgId, ",")),
-      TStapms = list_to_integer(LTStapms) * 1000000,
-      [ {bin_to_num(Intv), [TStapms]} | A]
-    end , [], PkgIds),
-
-    io:format("------------> ~p~n", [AddIntervals]),
-    AddIntervals;
-  true ->
-    OIntervals
-  end,
-
-  Intervals =
-  if(length(TIntervals) =:= 1) ->
-    [{_, [FirstTmsp]}] = TIntervals,
-    MinTimeStamp =
-    lists:foldr( fun(X, Min) ->
-      case X of
-        {{_Pkg, _Msg, Src, _Dst}, _} ->
-          NS = get_time_sent_interval(NLProtocol, Src, X, send_time),
-          NSVal = (NS < Min) and (NS > 0),
-          if NSVal -> NS;
-          true -> Min
-          end;
-        [{{_Pkg, _Msg, Src, _Dst}, _}] ->
-          NS = get_time_sent_interval(NLProtocol, Src, X, send_time),
-          NSVal = (NS < Min) and (NS > 0),
-          if NSVal -> NS;
-          true -> Min
-          end;
-        _ -> Min
-      end
-    end, 1000000000000, AddTable),
-    TT = [{15, [MinTimeStamp]} | TIntervals],
-    [{4, [FirstTmsp + 800000000]} | TT];
-  true ->
-    TIntervals
-  end,
-
   TableIntervals =
   lists:foldr( fun(X, Acc) ->
     case X of
-      {{_Pkg, _Msg, Src, _Dst}, _} ->
-        NS = get_time_sent_interval(NLProtocol, Src, X, send_time),
-        I = find_interval(NS, lists:reverse(Intervals), Is),
+      {{_Pkg, Msg, _Src, _Dst}, _} ->
+        I = find_interval(Msg),
         [{I, X} | Acc];
-      [{{_Pkg, _Msg, Src, _Dst}, _}] ->
-        NS = get_time_sent_interval(NLProtocol, Src, X, send_time),
-        I = find_interval(NS, lists:reverse(Intervals), Is),
+      [{{_Pkg, Msg, _Src, _Dst}, _}] ->
+        I = find_interval(Msg),
         [{I, X} | Acc];
       _ ->
         Acc
     end
   end, [], AddTable),
 
+  DeltaTable = ets:new(delta_table, [set, named_table]),
+
+  SyncTable =
+  case ?NTP of
+    true ->
+      TableIntervals;
+     _ ->
+      EtsSyncTable = ets:new(sync_links, [set, named_table]),
+      sync_time(TableIntervals, NLProtocol, EtsSyncTable, DeltaTable)
+  end,
+
+  ets:delete_all_objects(DeltaTable),
 
   CountIntPkg =
-  lists:foldr( fun(X, {N1, N2, N3}) ->
+  lists:foldr( fun(X, [N1, N2, N3, N4, N5]) ->
     {Int, _} = X,
     case Int of
-      4 -> {N1 + 1, N2, N3};
-      8 -> {N1, N2 + 1, N3};
-      15 -> {N1, N2, N3 + 1};
-      _ -> {N1, N2, N3}
+      4 -> [N1 + 1, N2, N3, N4, N5];
+      5 -> [N1, N2 + 1, N3, N4, N5];
+      8 -> [N1, N2, N3 + 1, N4, N5];
+      10 -> [N1, N2, N3, N4 + 1, N5];
+      15 -> [N1, N2, N3, N4, N5 + 1];
+      _ -> [N1, N2, N3, N4, N5]
     end
-  end, {0, 0, 0}, TableIntervals),
+  end, [0, 0, 0, 0, 0], TableIntervals),
 
-  EtsSyncTable = ets:new(sync_links, [set, named_table]),
-  DeltaTable = ets:new(delta_table, [set, named_table]),
-  SyncTable = sync_time(TableIntervals, NLProtocol, EtsSyncTable, DeltaTable),
+  Intervals =
+  lists:foldr( fun(X, A) ->
+    {Int, _} = X,
+    [Int | A]
+  end, [], TableIntervals),
 
+  StatsTable = ets:new(stats_table, [set, named_table]),
+  write_to_files(Intervals, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable, StatsTable),
+
+  io:format(" ~p~n", [CountIntPkg]).
+
+write_to_files([], _, _, _, _, _, _) ->
+  nothing;
+write_to_files([I| T], MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable, StatsTable) when I == 0 ->
+  write_to_files(T, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable, StatsTable);
+write_to_files([I | T], MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable, StatsTable) ->
+  SI = integer_to_list(I),
   {Title, TitleStats} =
   case NLProtocol of
     sncfloodr ->
@@ -1543,51 +1457,29 @@ analyse(EtsTable, MACProtocol, NLProtocol) ->
       io_lib:format("MACProtocol\tNLProtocol\tInterval\tSrc\tDst\tIfDeliveredDst\tIfDeliveredAck\tHops~n", [])}
   end,
 
-  ets:delete_all_objects(DeltaTable),
-  A8 = convet_to_csv(8, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable),
-  A15 = convet_to_csv(15, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable),
-  A4 = convet_to_csv(4, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable),
+  A10 = convet_to_csv(I, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable),
 
+  {ExpStart10, ExpEnd10, Stats10} = count_stats(I, MACProtocol, NLProtocol, SyncTable, StatsTable),
+  GetStats10 = get_stats(I, StatsTable, NLProtocol),
+  LengthExp10 = (ExpEnd10 - ExpStart10) / 1000000 / 60,
 
-  StatsTable = ets:new(stats_table, [set, named_table]),
-  {ExpStart15, ExpEnd15, Stats15} = count_stats(15, MACProtocol, NLProtocol, SyncTable, StatsTable),
-  GetStats15 = get_stats(15, StatsTable, NLProtocol),
-  LengthExp15 = (ExpEnd15 - ExpStart15) / 1000000 / 60,
+  TitleA10 = [Title | A10],
 
-  {ExpStart8, ExpEnd8, Stats8} = count_stats(8, MACProtocol, NLProtocol, SyncTable, StatsTable),
-  GetStats8 = get_stats(8, StatsTable, NLProtocol),
-  LengthExp8 = (ExpEnd8 - ExpStart8) / 1000000 / 60,
-
-  {ExpStart4, ExpEnd4, Stats4} = count_stats(4, MACProtocol, NLProtocol, SyncTable, StatsTable),
-  GetStats4 = get_stats(4, StatsTable, NLProtocol),
-  LengthExp4 = (ExpEnd4 - ExpStart4) / 1000000 / 60,
-
-  TitleA15 = [Title | A15],
-  A = [TitleA15 | A8],
-  AA = [A | A4],
-
-  [SLengthExp15] =  io_lib:format("~.6f", [LengthExp15]),
-  [SLengthExp8] =  io_lib:format("~.6f", [LengthExp8]),
-  [SLengthExp4] =  io_lib:format("~.6f", [LengthExp4]),
+  [SLengthExp10] =  io_lib:format("~.6f", [LengthExp10]),
 
   Desr = "\n[Hops/Count/CountAck/TotalCount] --> LengthExp \n",
-  ResStats15 = TitleStats ++ Stats15 ++ Desr  ++ "  "++ GetStats15 ++ "  " ++ SLengthExp15  ++ "\n",
-  ResStats8 = TitleStats ++ Stats8 ++ Desr ++ "  " ++ GetStats8 ++ "  " ++ SLengthExp8 ++ "\n",
-  ResStats4 = TitleStats ++ Stats4 ++ Desr ++ "  " ++ GetStats4 ++ "  " ++ SLengthExp4 ++ "\n",
-  ResStats = ResStats15 ++ ResStats8 ++ ResStats4,
+  ResStats = TitleStats ++ Stats10 ++ Desr  ++ "  "++ GetStats10 ++ "  " ++ SLengthExp10  ++ "\n",
 
   [{path, Dir}] = ets:lookup(EtsTable, path),
-  file:delete(Dir ++ "/res.log"),
-  file:write_file(Dir ++ "/res.log", io_lib:fwrite("~p ~n", [SyncTable])),
+  file:delete(Dir ++ "/res" ++ SI ++ ".log"),
+  file:write_file(Dir ++ "/res" ++ SI ++ ".log", io_lib:fwrite("~p ~n", [SyncTable])),
 
-  file:delete(Dir ++ "/res_csv.xls"),
-  file:write_file(Dir ++ "/res_csv.xls", io_lib:fwrite("~s ~n", [AA])),
+  file:delete(Dir ++ "/res_csv" ++ SI ++ ".xls"),
+  file:write_file(Dir ++ "/res_csv" ++ SI ++ ".xls", io_lib:fwrite("~s ~n", [TitleA10])),
 
-  file:delete(Dir ++ "/res_stats_csv.xls"),
-  file:write_file(Dir ++ "/res_stats_csv.xls", io_lib:fwrite("~s ~n", [ResStats])),
-
-  io:format(" ~p~n", [CountIntPkg]),
-  io:format(" ~p~n", [Intervals]).
+  file:delete(Dir ++ "/res_stats_csv" ++ SI ++ ".xls"),
+  file:write_file(Dir ++ "/res_stats_csv" ++ SI ++ ".xls", io_lib:fwrite("~s ~n", [ResStats])),
+  write_to_files(T, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable, StatsTable).
 
 
 check_recv(Dst, LNRecv) ->
@@ -2085,7 +1977,7 @@ convet_to_csv(SortInv, MACProtocol, NLProtocol, SyncTable, DeltaTable, EtsTable)
 
         [TimeAckL] = io_lib:format("~.4f", [TimeAck]),
 
-        {PkgLengthD, PkgLengthBack} = 
+        {PkgLengthD, PkgLengthBack} =
         if (NLProtocol =:= sensors) ->
           {6, length(binary_to_list(Data)) + 5};
         true ->
@@ -2240,9 +2132,19 @@ path_to_str(NPath, direct) ->
     ""
   end.
 
-sync_time_extra([], _Src, _Dst, _LNSent, _LNRecv, _PkgLength, _Direction) ->
+%log_nl_mac:start_parse(csma_alh, sncfloodr, "/home/nikolya/work/experiments/porto/parsed_logs/csma-aloha/sncfloodr/I10").
+
+% sync_time_extra(TPShortPath, Src, _Dst, LNSent, LNRecv, _PkgLength, _Direction, true) ->
+%   PShortPath = tuple_to_list(TPShortPath),
+%   Send_time = get_sent_time(Src, LNSent),
+%   Recv_time =  getTime(Src, LNRecv, recv),
+%   _ShortPath = [X || X <- PShortPath, X =/= Src],
+
+%   MTime = (Recv_time - Send_time) / 1000000,
+%   {MTime, 0, true};
+sync_time_extra([], _Src, _Dst, _LNSent, _LNRecv, _PkgLength, _Direction, _) ->
   {0, 0, 0};
-sync_time_extra(TPShortPath, Src, Dst, LNSent, LNRecv, PkgLength, _Direction) ->
+sync_time_extra(TPShortPath, Src, Dst, LNSent, LNRecv, PkgLength, _Direction, _) ->
   PShortPath = tuple_to_list(TPShortPath),
   Send_time = get_sent_time(Src, LNSent),
   ShortPath = [X || X <- PShortPath, X =/= Src],
@@ -2255,10 +2157,18 @@ sync_time_extra(TPShortPath, Src, Dst, LNSent, LNRecv, PkgLength, _Direction) ->
     fun(XX, Tuple) ->
       case XX of
         {X, ASrc, RTimeStamp} ->
-          DT = find_delta_t(ASrc, ATime, X, RTimeStamp, PkgLength),
+          DT =
+          case ?NTP of
+            true -> 0;
+            _ -> find_delta_t(ASrc, ATime, X, RTimeStamp, PkgLength)
+          end,
           {ASrc, X, DT, RTimeStamp - DT, RTimeStamp};
         {X, ASrc, _, RTimeStamp, _} ->
-          DT = find_delta_t(ASrc, ATime, X, RTimeStamp, PkgLength),
+          DT =
+          case ?NTP of
+            true -> 0;
+            _ -> find_delta_t(ASrc, ATime, X, RTimeStamp, PkgLength)
+          end,
           {ASrc, X, DT, RTimeStamp - DT, RTimeStamp};
         _ -> Tuple
       end
@@ -2324,7 +2234,7 @@ findPathsHelper(Src, Dst, _LNSent, SendAck, LNRecvAck, CurrPath, _Ns, [], Hops, 
   if OnePath == [] -> {0, 0, ""};
     true ->
     [OnePathT] = OnePath,
-    {Time, Delta, _Diff} = sync_time_extra(OnePathT, Src, Dst, SendAck, LNRecvAck, PkgLength, back),
+    {Time, Delta, _Diff} = sync_time_extra(OnePathT, Src, Dst, SendAck, LNRecvAck, PkgLength, back, ?NTP),
     {Delta, Time, path_to_str(OnePath, back)}
   end;
 
@@ -2339,10 +2249,11 @@ findPathsHelper(Src, Dst, LNSent, _SendAck, LNRecv, CurrPath, _Ns, [], _Hops, _N
   {DT, MinTime, NewPaths} =
   lists:foldr(
   fun(Path, Tuple = {_DeltaT, MinTimeT, A}) ->
-    {Time, Delta, Diff} = sync_time_extra(Path, Src, Dst, LNSent, LNRecv, PkgLength, direct),
+    {Time, Delta, Diff} = sync_time_extra(Path, Src, Dst, LNSent, LNRecv, PkgLength, direct, ?NTP),
     if (Diff == true) ->
       TimeT =
       if (Time < MinTimeT) -> Time; true -> MinTimeT end,
+
       NPL = [ {Time, Path} | A],
       {Delta, TimeT, NPL};
     true ->
@@ -2391,7 +2302,10 @@ findPathsHelper(Src, Dst, LNSent, _SendAck, LNRecv, CurrPath, _Ns, [], _Hops, _N
       [{TimeS, X} | A]
     end, [], NPath),
 
-    {DeltaS, TimeS, path_to_str(NewPathsT, direct)};
+    case ?NTP of
+      true -> {DT, MinTime, path_to_str(NewPaths, direct)};
+      _ -> {DeltaS, TimeS, path_to_str(NewPathsT, direct)}
+    end;
   true ->
     {DT, MinTime, path_to_str(NewPaths, direct)}
   end,
@@ -2546,60 +2460,14 @@ getTime(Src, L, Flag) ->
   end, 0, L).
 
 
-find_interval(NS, Intervals, Is) ->
-  { LIntervals, L, _Tmp } =
-  lists:foldr(
-    fun(_X, {Intvs, A, I}) ->
-      T = lists:nth(I, Intervals),
-      {Intv, _} = T,
-      { [Intv | Intvs], [T | A], I + 1 }
-    end, {[], [], 1}, Intervals),
-
-  Default =
-  if(length(Intervals) < 3) ->
-    lists:foldr(fun(X, A) ->
-    if (A == -1) ->
-      Member =  lists:member(X, LIntervals),
-      if Member -> -1;
-        true -> X
-      end;
-      true -> A
-      end
-    end, -1, Is);
-  true -> 15
-  end,
-
-  find_interval_helper(NS, L, 0, Default).
-
-find_interval_helper(_, [], NI, _) -> NI;
-find_interval_helper(_, [{_, []}, {_, []}, {_, []}], NI, _) -> NI;
-find_interval_helper(NS, L, NI, Default) ->
-  {IMax, TMax} = lists:foldr(
-    fun(X, {CI, A})->
-      {I, T} = X,
-      if T == [] ->
-        {CI, A};
-      true ->
-        CM = lists:max(T),
-        if(CM > A) -> {I, CM};
-          true -> {CI, A}
-        end
-      end
-      end, {nothing, -1}, L),
-
-  case {IMax, TMax} of
-    {nothing, -1} ->
-      find_interval_helper(NS, [], Default, Default);
-    _ ->
-      NL = lists:foldr(fun(X, A)-> {I, T} = X, Member = lists:member(TMax, T), if Member -> NT = lists:delete(TMax, T), [ {I, NT}| A]; true -> [X | A] end end, [], L),
-
-      if NS < TMax ->
-        find_interval_helper(NS, NL, NI, Default);
-      true ->
-        find_interval_helper(NS, [], IMax, Default)
-      end
+find_interval(Msg) ->
+  try
+    {match, [_D, _N, Interval, _T]} =
+    re:run(Msg, "([^.]*),([^.]*),([^.]*),([^.]*)", [dotall,{capture, all_but_first, binary}]),
+    bin_to_num(Interval)
+  catch error: _Reason ->
+    0
   end.
-
 
 % TODO merge with sensor branch
 extract_sensor_command(Payl) ->
@@ -2695,3 +2563,4 @@ extract_payl_conductivity(Data) ->
 %log_nl_mac:start_parse(csma_alh, dpffloodrack, "/home/nikolya/work/experiments/prepare_sahalinsk/sea_tests/evins_nl_mac_27.01.2016/test_alh_dpffloodrack").
 
 %log_nl_mac:start_parse(aut_lohi, sncfloodr, "/home/nikolya/work/experiments/prepare_sahalinsk/sea_tests/evins_nl_mac_27.01.2016/test_aut_lohi_sncfloodr").
+%log_nl_mac:start_parse(csma_alh, sncfloodr, "/home/nikolya/work/experiments/porto/parsed_logs/csma-aloha/sncfloodr/I10").
