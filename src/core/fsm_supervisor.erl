@@ -70,6 +70,12 @@ check_list_term({role,Role,iface,{cowboy,Address,Port}})
 check_list_term({role,Role,params,Params,iface,{cowboy,Address,Port}})
   when is_atom(Role), is_list(Params), is_list(Address), is_integer(Port) ->
   ok;
+check_list_term({role,Role,iface,{gun,Address,Port}})
+  when is_atom(Role), is_list(Address), is_integer(Port) ->
+  ok;
+check_list_term({role,Role,params,Params,iface,{gun,Address,Port}})
+  when is_atom(Role), is_list(Params), is_list(Address), is_integer(Port) ->
+  ok;
 check_list_term({role,Role,iface,{erlang,id,EID,target,{Module_ID,TID}}})
   when is_atom(Role), is_atom(EID), is_atom(Module_ID), is_atom(TID) ->
   ok;

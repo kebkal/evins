@@ -82,7 +82,14 @@ init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {cowboy,I,P}}} = Sta
   process_flag(trap_exit, true),
   Self = self(),
   gen_server:cast(Mod_ID, {Self, ID, ok}),
-  {ok, State};    
+  {ok, State};
+
+init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {gun,I,P}}} = State) ->
+  logger:info("role: ~p-~p~ninit: gun, host: ~p, port: ~p", [Mod_ID, ID, I, P]),
+  process_flag(trap_exit, true),
+  Self = self(),
+  gen_server:cast(Mod_ID, {Self, ID, ok}),
+  connect(State);
 
 init(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {erlang,Target}}} = State) ->
   logger:info("role: ~p-~p~ninit: erlang_direct, target: ~p", [Mod_ID, ID, Target]),
@@ -190,6 +197,8 @@ cast_connected(FSM, #ifstate{mm = MM, socket = Socket, port = Port} = State) ->
       gen_server:cast(FSM, {chan, MM, {connected}});
     {ssh,_,_,_,_} when Port /= nothing ->
       gen_server:cast(FSM, {chan, MM, {connected}});
+    {gun,_,_} when Socket /= nothing ->
+      gen_server:cast(FSM, {chan, MM, {connected}});
     _ ->
       nothing
   end,
@@ -268,6 +277,17 @@ connect(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {socket,IP,Port,_
       {ok, State}
   end;
 
+connect(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {gun,Host,Port}}} = State) ->
+  case gun:open(Host, Port) of
+    {ok, ConnPid} ->
+      logger:info("role: ~p-~p~nconnected", [Mod_ID, ID]),
+      {ok, State#ifstate{socket = ConnPid}};
+    {error, Reason} ->
+      {ok, _} = timer:send_after(5000, timeout),
+      logger:warning("role: ~p-~p~ngun:open(~p, ~p) error: ~p~nretry", [Mod_ID, ID, Host, Port, Reason]),
+      {ok, State}
+  end;
+
 connect(#ifstate{id = ID, module_id = Mod_ID, mm = #mm{iface = {ssh,Host,Port,Cmd,Opts}}, proto = ssh} = State) ->
   case ssh:connect(Host, Port, [silently_accept_hosts, quiet_mode | Opts]) of
     {ok, Socket} ->
@@ -332,8 +352,26 @@ handle_call(Request, From, #ifstate{id = ID, module_id = Mod_ID} = State) ->
   {stop, unhandled_call, State}.
 
 handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, cfg = Cfg, mm = #mm{iface = {cowboy,_,_}}} = State) ->
-  NewCfg = B:from_term(Term, Cfg),
+  [_, NewCfg] = B:from_term(Term, Cfg),
   {noreply, State#ifstate{cfg = NewCfg}};
+
+handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, cfg = Cfg, socket = ConnPid, listener = StreamRef, fsm_pids = FSMs, mm = #mm{iface = {gun,_,_}} = MM} = State) ->
+  NStreamRef =
+  case Term of
+      {get, URI, Headers}         -> gun:get(ConnPid, URI, Headers);
+      {head, URI, Headers}        -> gun:head(ConnPid, URI, Headers);
+      {post, URI, Headers}        -> gun:post(ConnPid, URI, Headers);
+      {put, URI, Headers}         -> gun:put(ConnPid, URI, Headers);
+      {patch, URI, Headers}       -> gun:patch(ConnPid, URI, Headers);
+      {post, URI, Headers, Body}  -> gun:post(ConnPid, URI, Headers, Body);
+      {put, URI, Headers, Body}   -> gun:put(ConnPid, URI, Headers, Body);
+      {patch, URI, Headers, Body} -> gun:patch(ConnPid, URI, Headers, Body);
+      {delete, URI, Headers}      -> gun:delete(ConnPid, URI, Headers);
+      {body, Bin, End}            -> gun:data(ConnPid, StreamRef, End, Bin), StreamRef % assuming that 'body' is sent right after 'post', 'put' or 'patch'
+  end,
+  [_, NewCfg] = B:from_term(Term, Cfg), % let user to store StreamRef to sort replies in future
+  conditional_cast(FSMs, Cfg, {chan, MM, {http_request, StreamRef, Term}}),
+  {noreply, State#ifstate{cfg = NewCfg, listener = NStreamRef}};
 
 handle_cast_helper({_, {send, Term}}, #ifstate{mm = #mm{iface = {erlang,Target}}} = State) ->
   catch (Target ! {bridge, Term}),
@@ -473,6 +511,17 @@ handle_info({inet_async, LSock, Ref, Error}, #ifstate{id = ID, module_id = Mod_I
   logger:error("role: ~p-~p~ninet_async error: ~p", [Mod_ID, ID, Error]),
   {stop, Error, State};
 
+handle_info({gun_up, ConnPid, Protocol}, #ifstate{id = ID, module_id = Mod_ID, mm = _MM, fsm_pids = _FSMs, socket = ConnPid} = State) ->
+  logger:info("role: ~p-~p~nconnected: ~p", [Mod_ID, ID, Protocol]),
+  cast_connected(State),
+  {noreply, State};
+
+handle_info({gun_down, ConnPid, _Protocol, Reason, KilledStreams}, #ifstate{id = ID, module_id = Mod_ID, mm = MM, fsm_pids = FSMs, cfg = Cfg, socket = ConnPid} = State) ->
+  logger:error("role: ~p-~p~ndisconnected: ~p", [Mod_ID, ID, Reason]),
+  broadcast(FSMs, {chan_error, MM, disconnected}),
+  conditional_cast(FSMs, Cfg, {chan, MM, {http_canceled, KilledStreams}}),
+  {noreply, State};
+
 handle_info({tcp, _, Bin}, State) ->
   process_bin(Bin, State);
 
@@ -520,6 +569,32 @@ handle_info(timeout, State) ->
     {ok, NewState} -> {noreply, NewState};
     {stop, Reason} -> {stop, Reason, State}
   end;
+
+handle_info({gun_error, ConnPid, Reason}, #ifstate{id = ID, module_id = Mod_ID, fsm_pids = FSMs, socket = ConnPid, mm = MM} = State) ->
+  logger:info("role: ~p-~p~nerror: ~p", [Mod_ID, ID, Reason]),
+  broadcast(FSMs, {chan_error, MM, Reason}),
+  {noreply, State};
+
+handle_info({gun_error, ConnPid, StreamRef, Reason}, #ifstate{id = ID, module_id = Mod_ID, fsm_pids = FSMs, socket = ConnPid, mm = MM} = State) ->
+  logger:info("role: ~p-~p~nstream: ~p~nstream_error: ~p", [Mod_ID, ID, StreamRef, Reason]),
+  broadcast(FSMs, {chan_error, MM, Reason}),
+  {noreply, State};
+
+handle_info({gun_inform, ConnPid, _StreamRef, _Status, _Headers}, #ifstate{id = _ID, module_id = _Mod_ID, fsm_pids = _FSMs, socket = ConnPid, mm = _MM} = State) ->
+  {noreply, State};
+
+handle_info({gun_response, ConnPid, StreamRef, IsFin, Status, Headers}, #ifstate{id = ID, module_id = Mod_ID, fsm_pids = FSMs, socket = ConnPid, cfg = Cfg, mm = MM} = State) ->
+  logger:debug("role: ~p-~p~nstream: ~p~nstatus: ~p, headers: ~p", [Mod_ID, ID, StreamRef, Status, Headers]),
+  conditional_cast(FSMs, Cfg, {chan, MM, {http_reply, StreamRef, Status, Headers}}),
+  case IsFin of
+      fin -> conditional_cast(FSMs, Cfg, {chan, MM, {http_body, StreamRef, fin, <<>>}});
+      _ -> ok
+  end,
+  {noreply, State};
+
+handle_info({gun_data, ConnPid, StreamRef, IsFin, Data}, #ifstate{id = _ID, module_id = _Mod_ID, fsm_pids = FSMs, socket = ConnPid, cfg = Cfg, mm = MM} = State) ->
+  conditional_cast(FSMs, Cfg, {chan, MM, {http_body, StreamRef, IsFin, Data}}),
+  {noreply, State};
 
 handle_info({Port, closed}, #ifstate{id = ID, module_id = Mod_ID, fsm_pids = FSMs, port = Port, mm = MM} = State) ->
   logger:info("role: ~p-~p~nclosed", [Mod_ID, ID]),

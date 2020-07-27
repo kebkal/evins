@@ -44,6 +44,8 @@ role_workers(ID, Mod_ID, Offset, ConfigData) ->
   Roles = 
     [{R,{cowboy,I,P},[]}       || {role,R,iface,{cowboy,I,P}} <- ConfigData] ++
     [{R,{cowboy,I,P},E}        || {role,R,params,E,iface,{cowboy,I,P}} <- ConfigData] ++
+    [{R,{gun,I,P},[]}          || {role,R,iface,{gun,I,P}} <- ConfigData] ++
+    [{R,{gun,I,P},E}           || {role,R,params,E,iface,{gun,I,P}} <- ConfigData] ++
     [{R,{erlang,I1,Target},[]} || {role,R,iface,{erlang,id,I1,target,Target}} <- ConfigData] ++
     [{R,{erlang,I1,Target},E}  || {role,R,params,E,iface,{erlang,id,I1,target,Target}} <- ConfigData] ++
     [{R,{socket,I,P,T},[]}     || {role,R,iface,{socket,I,P,T}} <- ConfigData] ++
@@ -64,6 +66,7 @@ role_workers(ID, Mod_ID, Offset, ConfigData) ->
                                                       {serial,_,_,_,_,_,_} -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {port,_,_}      -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {cowboy,_,_}    -> io_lib:format("~p_~p_~p",[R,ID,N]);
+                                                      {gun,_,_}    -> io_lib:format("~p_~p_~p",[R,ID,N]);
                                                       {erlang,I1,_} -> io_lib:format("~p_~p",[ID,I1])
                                                     end))
                      end, zip(seq(Offset,Offset-1+length(Roles)), Roles)),
