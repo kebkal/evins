@@ -352,7 +352,7 @@ handle_call(Request, From, #ifstate{id = ID, module_id = Mod_ID} = State) ->
   {stop, unhandled_call, State}.
 
 handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, cfg = Cfg, mm = #mm{iface = {cowboy,_,_}}} = State) ->
-  [_, NewCfg] = B:from_term(Term, Cfg),
+  NewCfg = B:from_term(Term, Cfg),
   {noreply, State#ifstate{cfg = NewCfg}};
 
 handle_cast_helper({_, {send, Term}}, #ifstate{behaviour = B, cfg = Cfg, socket = ConnPid, listener = StreamRef, fsm_pids = FSMs, mm = #mm{iface = {gun,_,_}} = MM} = State) ->
