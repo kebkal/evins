@@ -3,7 +3,7 @@ PROJECT = evins
 DEPS = cowboy gun parse_trans
 dep_cowboy = git https://github.com/extend/cowboy 2.6.3
 dep_cowlib = git https://github.com/extend/cowlib 2.7.3
-dep_gun = git https://github.com/ninenines/gun.git master 2.0.0-pre.2
+dep_gun = git https://github.com/ninenines/gun 2.0.0-pre.2
 dep_ranch = git https://github.com/extend/ranch 1.7.1
 dep_parse_trans = git https://github.com/uwiger/parse_trans 3.3.0
 
