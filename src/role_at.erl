@@ -573,11 +573,13 @@ parse_the_rest(Len, Rest) ->
     _ -> more
   end.
 
+from_term({raw, Data}, Cfg) when is_binary(Data) ->
+  [Data, Cfg];
 from_term(Term, #{waitsync := no} = Cfg) ->
   from_term_priv(Term, Cfg);
 from_term(Term, #{txtime := TXTime} = Cfg) ->
-  case erlang:system_time(seconds) - TXTime of
-    D when D > 1 ->
+  case erlang:system_time(millisecond) - TXTime of
+    D when D > 900 ->
       from_term_priv(Term, Cfg);
     _ ->
       {error, at_sequenceError}
@@ -595,13 +597,11 @@ from_term(Term, #{txtime := TXTime} = Cfg) ->
 %% [Bin, NewConfig] = from_term_priv(Term, Config)
 %%
 %% запятой от строки параметров отделаютсятя только send параметры
-from_term_priv({raw,Data}, Cfg) when is_binary(Data) -> 
-  [Data, Cfg];
 from_term_priv(Term, #{pid := Pid, filter := Filter, eol := EOL} = Cfg) ->
   %% io:format("Term = ~p~n",[Term]),
   {Request, Wait, Telegram} = from_term_helper(Term, Pid, Filter),
   [list_to_binary([prefix(Cfg), Telegram, EOL])
-  , Cfg#{waitsync => Wait, txtime => erlang:system_time(seconds), request => Request, telegram => Telegram}].
+  , Cfg#{waitsync => Wait, txtime => erlang:system_time(millisecond), request => Request, telegram => Telegram}].
 
 %% NOTE: disabled @ZF not supported!!!
 %% {at,{pid,Pid},"*SEND",Dst,Data}} or {at,"*SEND",Dst,Data}
